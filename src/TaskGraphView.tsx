@@ -24,7 +24,7 @@ import TaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
-// 🌟 核心样式：React Flow 基础
+// 🌟 核心样式
 const REACT_FLOW_CORE_STYLES = `
     .react-flow{direction:ltr;width:100%;height:100%;position:relative;z-index:0;overflow:hidden}
     .react-flow__background{background-color:transparent;z-index:-1;width:100%;height:100%;top:0;left:0;position:absolute}
@@ -164,8 +164,10 @@ const CUSTOM_STYLES = `
     .task-sidebar { position: absolute; top: 10px; left: 10px; bottom: 10px; width: 240px; background: var(--background-secondary); opacity: 0.95; backdrop-filter: blur(20px); border-radius: 16px; border: 1px solid var(--background-modifier-border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); z-index: 20; display: flex; flex-direction: column; padding: 16px; pointer-events: all; overflow: hidden; }
     .sidebar-section { margin-bottom: 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
     .sidebar-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
-    .sidebar-list { overflow-y: auto; flex: 1; padding-right: 4px; scrollbar-width: thin; }
-    .sidebar-item { font-size: 12px; padding: 8px 10px; margin-bottom: 6px; background: var(--background-primary); border-radius: 8px; cursor: pointer; transition: all 0.2s; border-left: 3px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal); }
+    .sidebar-list { overflow-y: auto; flex: 1; padding-right: 4px; scrollbar-width: thin; transition: background 0.2s; border-radius: 8px; }
+    .sidebar-list.drag-over { background: rgba(var(--interactive-accent-rgb), 0.1); border: 2px dashed var(--interactive-accent); }
+    .sidebar-item { font-size: 12px; padding: 8px 10px; margin-bottom: 6px; background: var(--background-primary); border-radius: 8px; cursor: grab; transition: all 0.2s; border-left: 3px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal); }
+    .sidebar-item:active { cursor: grabbing; }
     .sidebar-item:hover { background: var(--background-modifier-hover); transform: translateX(2px); }
     .item-in-progress { border-left-color: #34c759; } .item-pending { border-left-color: #ff9500; } .item-backlog { border-left-color: #8e8e93; }
     .react-flow__panel > * { pointer-events: all; }
@@ -198,8 +200,8 @@ const TaskNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
             <input 
                 type="checkbox" 
                 className="custom-checkbox"
-                checked={data.status !== ' ' && data.status !== '/'} 
-                onChange={() => {}}
+                checked={data.status === 'x'} 
+                onChange={() => {}} 
                 onClick={handleCheckboxClick}
                 style={{ marginTop: '3px' }}
             />
@@ -216,6 +218,7 @@ const TaskNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
   );
 };
 
+// ... TextNode ...
 const TextNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
     const handleBlur = () => { if (text !== data.label) data.onSave(data.id, text); };
@@ -232,6 +235,7 @@ const TextNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
 
 const nodeTypes = { task: TaskNode, text: TextNode };
 
+// ... EditTaskModal ...
 const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText: string, onClose: () => void, onSave: (text: string) => void, allTags: string[] }) => {
     const [text, setText] = React.useState(initialText);
     const [suggestions, setSuggestions] = React.useState<string[]>([]);
@@ -270,14 +274,30 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     );
 };
 
-const TaskSidebar = ({ nodes, onNodeClick }: { nodes: Node[], onNodeClick: (nodeId: string) => void }) => {
+// ... Sidebar, Toolbar, ControlPanel ...
+const TaskSidebar = ({ nodes, onNodeClick, onStatusChange }: { nodes: Node[], onNodeClick: (nodeId: string) => void, onStatusChange: (id: string, status: string) => void }) => {
     const tasks = nodes.filter(n => n.type === 'task');
     const inProgress = tasks.filter(n => n.data.customStatus === 'in_progress');
     const pending = tasks.filter(n => n.data.customStatus === 'pending');
     const backlog = tasks.filter(n => n.data.customStatus === 'backlog' || n.data.customStatus === 'default' || !n.data.customStatus);
     const stopProp = (e: React.MouseEvent | React.WheelEvent) => e.stopPropagation();
-    const renderList = (title: string, items: Node[], color: string, className: string) => (<div className="sidebar-section"><div className="sidebar-title" style={{ color: color }}><div style={{ width: 6, height: 6, borderRadius: '50%', background: color }}></div>{title} <span style={{ opacity: 0.5 }}>({items.length})</span></div><div className="sidebar-list">{items.map(node => (<div key={node.id} className={`sidebar-item item-${className}`} onClick={() => onNodeClick(node.id)}>{node.data.label.replace(/#\S+/g, '').trim()}</div>))}{items.length === 0 && <div style={{ fontSize: '11px', color: 'var(--text-faint)', paddingLeft: '10px' }}>Empty</div>}</div></div>);
-    return (<div className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)' }}>My Tasks</div>{renderList('In Progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog')}</div>);
+
+    const handleDragStart = (e: React.DragEvent, nodeId: string) => {
+        e.dataTransfer.setData('nodeId', nodeId);
+        e.dataTransfer.effectAllowed = 'move';
+    };
+    const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+    const handleDrop = (e: React.DragEvent, targetStatus: string) => {
+        e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) onStatusChange(nodeId, targetStatus);
+    };
+
+    const renderList = (title: string, items: Node[], color: string, className: string, statusKey: string) => (
+        <div className="sidebar-section" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
+            <div className="sidebar-title" style={{ color: color }}><div style={{ width: 6, height: 6, borderRadius: '50%', background: color }}></div>{title} <span style={{ opacity: 0.5 }}>({items.length})</span></div>
+            <div className="sidebar-list">{items.map(node => (<div key={node.id} className={`sidebar-item item-${className}`} onClick={() => onNodeClick(node.id)} draggable onDragStart={(e) => handleDragStart(e, node.id)}>{node.data.label.replace(/#\S+/g, '').trim()}</div>))}{items.length === 0 && <div style={{ fontSize: '11px', color: 'var(--text-faint)', paddingLeft: '10px' }}>Empty - Drop here</div>}</div>
+        </div>
+    );
+    return (<div className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)' }}>My Tasks</div>{renderList('In Progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
 };
 
 const GraphToolbar = () => {
@@ -303,6 +323,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus onKeyDown={(e) => e.key === 'Enter' && handleSaveName()} /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={onResetView}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
 };
 
+// --- 主图表组件 ---
 const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -312,7 +333,12 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   const [allTags, setAllTags] = React.useState<string[]>([]);
   const reactFlowInstance = useReactFlow();
+  
+  // 🌟 1. 互斥锁
+  const connectionMadeRef = React.useRef(false);
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
+  // 🌟 2. 意图锁：用于存储“待连接”的信息
+  const pendingConnectionRef = React.useRef<{ sourceId: string; targetText: string; timestamp: number } | null>(null);
 
   React.useEffect(() => {
     const styleId = 'task-graph-styles';
@@ -322,6 +348,11 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   }, []);
 
   const activeBoard = plugin.settings.boards.find(b => b.id === activeBoardId) || plugin.settings.boards[0];
+
+  React.useEffect(() => {
+      // @ts-ignore
+      plugin.viewRefresh = () => setRefreshKey(prev => prev + 1);
+  }, []);
 
   React.useEffect(() => {
     const loadData = async () => {
@@ -335,12 +366,41 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const savedNodeStatus = boardConfig?.data.nodeStatus || {};
       const savedTextNodes = boardConfig?.data.textNodes || [];
 
+      // 🌟 核心：自动配对逻辑
+      if (pendingConnectionRef.current) {
+          const { sourceId, targetText, timestamp } = pendingConnectionRef.current;
+          // 只处理 5 秒内的请求，防止旧数据干扰
+          if (Date.now() - timestamp < 5000) {
+              // 在新加载的 tasks 中寻找匹配的节点
+              // 注意：new task 可能包含 '- [ ] ' 前缀，而 targetText 是纯文本，或者反过来
+              // 这里做一个宽松匹配
+              const newNode = tasks.find(t => t.text.includes(targetText) || targetText.includes(t.text));
+              
+              if (newNode) {
+                  // 找到了！创建连线
+                  const newEdge = { 
+                      id: `e${sourceId}-${newNode.id}`, 
+                      source: sourceId, target: newNode.id, 
+                      animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } 
+                  };
+                  // 更新 savedEdges 以便立刻渲染，并保存
+                  savedEdges.push(newEdge);
+                  await plugin.saveBoardData(activeBoardId, { edges: savedEdges });
+                  new Notice("Linked successfully!");
+                  
+                  // 消费掉这个意图
+                  pendingConnectionRef.current = null;
+              }
+          } else {
+              pendingConnectionRef.current = null; // 超时清除
+          }
+      }
+
       const taskNodes: Node[] = tasks.map((t, index) => {
         let posX = savedLayout[t.id]?.x;
         let posY = savedLayout[t.id]?.y;
         if (typeof posX !== 'number' || isNaN(posX)) { posX = (index % 3) * 320; posY = Math.floor(index / 3) * 200; }
         
-        // 🌟 初始化逻辑：如果文件状态是 'x'，强制覆盖为 'finished'
         let finalCustomStatus = savedNodeStatus[t.id] || 'default';
         if (t.status === 'x') finalCustomStatus = 'finished';
 
@@ -348,7 +408,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
             id: t.id, type: 'task', position: { x: posX, y: posY },
             data: { 
                 id: t.id, label: t.text, status: t.status, file: t.file, path: t.path, line: t.line, 
-                customStatus: finalCustomStatus, // 🌟 应用修正后的状态
+                customStatus: finalCustomStatus, 
                 onEdit: handleEditTask, onToggleStatus: handleToggleTask 
             }
         };
@@ -365,8 +425,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
     loadData();
   }, [plugin, activeBoardId, refreshKey]);
 
-  const onConnectStart = React.useCallback((event: any, params: any) => { connectionStartRef.current = params; }, []);
+  // --- 交互逻辑 ---
+  const onConnectStart = React.useCallback((event: any, params: any) => { 
+      connectionStartRef.current = params; 
+      connectionMadeRef.current = false;
+  }, []);
+
   const onConnectEnd = React.useCallback((event: any) => {
+      if (connectionMadeRef.current) return;
       const targetIsPane = event.target.classList.contains('react-flow__pane');
       if (targetIsPane && connectionStartRef.current.nodeId) {
           const sourceNodeId = connectionStartRef.current.nodeId;
@@ -377,53 +443,46 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   }, [nodes]);
 
-  // 🌟 状态切换逻辑更新
   const handleToggleTask = async (id: string, currentStatus: string) => {
-      const node = nodes.find(n => n.id === id);
-      if (!node) return;
-      
+      const node = nodes.find(n => n.id === id); if (!node) return;
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
-      // 🌟 如果取消完成，退回 backlog；如果完成，变为 finished
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
-
-      setNodes(nds => nds.map(n => {
-          if (n.id === id) {
-              return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } };
-          }
-          return n;
-      }));
-
-      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-      if (board) {
-          const nodeStatus = board.data.nodeStatus || {};
-          nodeStatus[id] = newCustomStatus;
-          await plugin.saveBoardData(activeBoardId, { nodeStatus });
-      }
-
+      setNodes(nds => nds.map(n => { if (n.id === id) { return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; } return n; }));
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = board.data.nodeStatus || {}; nodeStatus[id] = newCustomStatus; await plugin.saveBoardData(activeBoardId, { nodeStatus }); }
       const file = plugin.app.vault.getAbstractFileByPath(node.data.path);
       if (file instanceof TFile) {
-           const content = await plugin.app.vault.read(file);
-           const lines = content.split('\n');
+           const content = await plugin.app.vault.read(file); const lines = content.split('\n');
            if (lines.length > node.data.line) {
-               lines[node.data.line] = lines[node.data.line].replace(/- \[.\]/, `- [${newStatus}]`);
-               await plugin.app.vault.modify(file, lines.join('\n'));
+               let line = lines[node.data.line]; line = line.replace(/(- \[)(.)(\])/, `$1${newStatus}$3`);
+               const today = new Date(); const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+               const completionTag = ` ✅ ${dateStr}`; const completionRegex = / ✅ \d{4}-\d{2}-\d{2}/g;
+               if (newStatus === 'x') { if (!completionRegex.test(line)) { line = line.trimEnd() + completionTag; } } else { line = line.replace(completionRegex, ''); }
+               lines[node.data.line] = line; await plugin.app.vault.modify(file, lines.join('\n'));
            }
       }
   };
 
+  const updateNodeStatus = async (nodeId: string, status: string) => { setNodes((nds) => nds.map((n) => { if (n.id === nodeId) return { ...n, data: { ...n.data, customStatus: status } }; return n; })); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = (board.data as any).nodeStatus || {}; nodeStatus[nodeId] = status; await plugin.saveBoardData(activeBoardId, { nodeStatus } as any); } };
+
+  // 🌟 核心升级：创建任务时不连线，只存意图
   const handleCreateTask = async (text: string) => {
       if (!createTarget) return;
-      const newId = await plugin.appendTaskToFile(createTarget.sourcePath, text);
-      if (newId) {
-          const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } };
-          const board = plugin.settings.boards.find(b => b.id === activeBoardId);
-          if (board) { const edges = [...board.data.edges, newEdge]; await plugin.saveBoardData(activeBoardId, { edges }); }
-          new Notice("Task created & linked!"); setRefreshKey(prev => prev + 1);
-      }
+      // 1. 写入文件
+      await plugin.appendTaskToFile(createTarget.sourcePath, text);
+      
+      // 2. 存入意图 (Intent)
+      pendingConnectionRef.current = {
+          sourceId: createTarget.sourceNodeId,
+          targetText: text.trim(), // 存纯文本用于匹配
+          timestamp: Date.now()
+      };
+
+      // 3. 关闭弹窗，不用手动刷新，因为 appendTaskToFile 会触发文件修改 -> 触发 metadataCache -> 触发自动刷新
       setCreateTarget(null);
+      new Notice("Creating task...");
   };
 
-  const onConnect = React.useCallback((params: Connection) => { setEdges((eds) => { const newEdges = addEdge({ ...params, animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } }, eds); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); }, [plugin, activeBoardId, setEdges]);
+  const onConnect = React.useCallback((params: Connection) => { connectionMadeRef.current = true; setEdges((eds) => { const newEdges = addEdge({ ...params, animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } }, eds); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); }, [plugin, activeBoardId, setEdges]);
   const onNodeDragStop = React.useCallback((event: any, node: Node) => { setNodes((nds) => nds.map(n => n.id === node.id ? node : n)); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(!board) return; if (node.type === 'task') { const layout = { ...board.data.layout, [node.id]: node.position }; plugin.saveBoardData(activeBoardId, { layout }); } else if (node.type === 'text') { const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); plugin.saveBoardData(activeBoardId, { textNodes }); } }, [plugin, activeBoardId, setNodes]);
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
   const handleEditTask = (taskData: any) => { setEditTarget({ id: taskData.id, text: taskData.label, path: taskData.path, line: taskData.line }); };
@@ -449,12 +508,12 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       event.preventDefault(); event.stopPropagation();
       const menu = new Menu();
       if (node.type === 'task') {
-          const setStatus = (status: string) => updateNodeStatus(node.id, status);
-          menu.addItem((item) => item.setTitle('⚪ Backlog').onClick(() => setStatus('backlog')));
-          menu.addItem((item) => item.setTitle('🟡 Pending').onClick(() => setStatus('pending')));
-          menu.addItem((item) => item.setTitle('🟢 In Progress').onClick(() => setStatus('in_progress')));
-          menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => setStatus('blocked')));
-          menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => setStatus('finished')));
+          const setStatus = (status: string) => handleToggleTask(node.id, node.data.status); 
+          menu.addItem((item) => item.setTitle('⚪ Backlog').onClick(() => updateNodeStatus(node.id, 'backlog')));
+          menu.addItem((item) => item.setTitle('🟡 Pending').onClick(() => updateNodeStatus(node.id, 'pending')));
+          menu.addItem((item) => item.setTitle('🟢 In Progress').onClick(() => updateNodeStatus(node.id, 'in_progress')));
+          menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => updateNodeStatus(node.id, 'blocked')));
+          menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => updateNodeStatus(node.id, 'finished')));
       } else if (node.type === 'text') {
           menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(async () => {
               const board = plugin.settings.boards.find(b => b.id === activeBoardId);
@@ -462,139 +521,25 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           }));
       }
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
-  }, [plugin, activeBoardId]);
+  }, [plugin, activeBoardId, nodes]);
 
-  const updateNodeStatus = async (nodeId: string, status: string) => { setNodes((nds) => nds.map((n) => { if (n.id === nodeId) return { ...n, data: { ...n.data, customStatus: status } }; return n; })); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = (board.data as any).nodeStatus || {}; nodeStatus[nodeId] = status; await plugin.saveBoardData(activeBoardId, { nodeStatus } as any); } };
   const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; plugin.saveSettings(); };
   const handleAddBoard = async () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
   const handleDeleteBoard = async (id: string) => { const newBoards = plugin.settings.boards.filter(b => b.id !== id); plugin.settings.boards = newBoards; const nextBoard = newBoards[0]; setActiveBoardId(nextBoard.id); plugin.settings.lastActiveBoardId = nextBoard.id; await plugin.saveSettings(); };
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 核心升级：Auto Layout (带沉底逻辑)
   const handleAutoLayout = async () => {
-      // 1. 构建图结构
-      const adjacency: Record<string, string[]> = {};
-      const parents: Record<string, string[]> = {};
-      const inDegree: Record<string, number> = {};
+      const adjacency: Record<string, string[]> = {}; const parents: Record<string, string[]> = {}; const inDegree: Record<string, number> = {};
       nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; inDegree[n.id] = 0; });
-      edges.forEach(e => { 
-          if (adjacency[e.source]) { 
-              adjacency[e.source].push(e.target); 
-              if (!parents[e.target]) parents[e.target] = [];
-              parents[e.target].push(e.source);
-              inDegree[e.target] = (inDegree[e.target] || 0) + 1; 
-          } 
-      });
-
-      // 2. 核心分流：已完成孤立节点 vs 活跃节点
-      const connectedNodeIds = new Set<string>();
-      edges.forEach(e => { connectedNodeIds.add(e.source); connectedNodeIds.add(e.target); });
-
-      const mainNodes: string[] = [];
-      const orphanFinishedNodes: string[] = [];
-
-      nodes.forEach(n => {
-          if (n.type !== 'task') { mainNodes.push(n.id); return; } // 文本节点暂归入主图
-          const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished';
-          const isOrphan = !connectedNodeIds.has(n.id);
-          
-          if (isFinished && isOrphan) {
-              orphanFinishedNodes.push(n.id);
-          } else {
-              mainNodes.push(n.id);
-          }
-      });
-
-      const layout: Record<string, {x: number, y: number}> = {};
-      const COL_WIDTH = 340; 
-      const ROW_HEIGHT = 200;
-
-      // 3. 对 Main Nodes 执行重心布局
-      if (mainNodes.length > 0) {
-          const queue = mainNodes.filter(id => inDegree[id] === 0);
-          if (queue.length === 0 && mainNodes.length > 0) queue.push(mainNodes[0]); // 破环
-          
-          const levels: Record<string, number> = {};
-          const visited = new Set<string>();
-          while(queue.length > 0) {
-              const curr = queue.shift()!;
-              if (visited.has(curr)) continue;
-              visited.add(curr);
-              adjacency[curr]?.forEach(next => {
-                  if (mainNodes.includes(next)) {
-                      levels[next] = Math.max(levels[next] || 0, (levels[curr] || 0) + 1);
-                      if(!visited.has(next)) queue.push(next);
-                  }
-              });
-          }
-
-          const levelGroups: Record<number, string[]> = {};
-          let maxLevel = 0;
-          mainNodes.forEach(id => { const lvl = levels[id] || 0; maxLevel = Math.max(maxLevel, lvl); if(!levelGroups[lvl]) levelGroups[lvl] = []; levelGroups[lvl].push(id); });
-
-          // 前向扫描
-          for (let lvl = 0; lvl <= maxLevel; lvl++) {
-              const currentNodes = levelGroups[lvl] || [];
-              const nodeWithY = currentNodes.map(nodeId => {
-                  const nodeParents = parents[nodeId] || [];
-                  let avgY = 0; let count = 0;
-                  if (nodeParents.length > 0) {
-                      nodeParents.forEach(p => { if (layout[p]) { avgY += layout[p].y; count++; } });
-                  }
-                  const heuristicY = count > 0 ? avgY / count : Infinity;
-                  return { id: nodeId, y: heuristicY };
-              });
-              nodeWithY.sort((a, b) => { if (a.y === Infinity && b.y === Infinity) return a.id.localeCompare(b.id); if (a.y === Infinity) return 1; if (b.y === Infinity) return -1; return a.y - b.y; });
-              let currentY = 0;
-              nodeWithY.forEach((item) => {
-                  let y = item.y === Infinity ? currentY : item.y;
-                  if (y < currentY) y = currentY;
-                  layout[item.id] = { x: lvl * COL_WIDTH, y: y };
-                  currentY = y + ROW_HEIGHT;
-              });
-          }
-          // 后向扫描
-          for (let lvl = maxLevel - 1; lvl >= 0; lvl--) {
-              const currentNodes = levelGroups[lvl] || [];
-              const nodeWithY = currentNodes.map(nodeId => {
-                  const nodeChildren = adjacency[nodeId] || [];
-                  let avgY = 0; let count = 0;
-                  if (nodeChildren.length > 0) {
-                      nodeChildren.forEach(c => { if (layout[c]) { avgY += layout[c].y; count++; } });
-                  }
-                  const heuristicY = count > 0 ? avgY / count : layout[nodeId].y;
-                  return { id: nodeId, y: heuristicY };
-              });
-              nodeWithY.sort((a, b) => a.y - b.y);
-              let positions: number[] = [];
-              nodeWithY.forEach((item, idx) => {
-                  let y = item.y;
-                  if (idx > 0) { const prevY = positions[idx - 1]; if (y < prevY + ROW_HEIGHT) y = prevY + ROW_HEIGHT; }
-                  positions.push(y); layout[item.id] = { x: lvl * COL_WIDTH, y: y };
-              });
-          }
-      }
-
-      // 4. 处理沉底的孤岛节点
-      let maxY = 0;
-      Object.values(layout).forEach(pos => maxY = Math.max(maxY, pos.y));
-      const START_Y_FOR_FINISHED = maxY + ROW_HEIGHT * 2; // 留出空隙
-      const ORPHAN_COL_COUNT = 4; // 沉底区按4列网格排布
-
-      orphanFinishedNodes.forEach((id, idx) => {
-          const row = Math.floor(idx / ORPHAN_COL_COUNT);
-          const col = idx % ORPHAN_COL_COUNT;
-          layout[id] = {
-              x: col * COL_WIDTH,
-              y: START_Y_FOR_FINISHED + (row * ROW_HEIGHT)
-          };
-      });
-
-      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] || n.position }))); 
-      await plugin.saveBoardData(activeBoardId, { layout }); 
-      new Notice("Smart layout applied!"); 
-      setTimeout(() => reactFlowInstance.fitView({ padding: 0.2, duration: 800 }), 100);
+      edges.forEach(e => { if (adjacency[e.source]) { adjacency[e.source].push(e.target); if (!parents[e.target]) parents[e.target] = []; parents[e.target].push(e.source); inDegree[e.target] = (inDegree[e.target] || 0) + 1; } });
+      const connectedNodeIds = new Set<string>(); edges.forEach(e => { connectedNodeIds.add(e.source); connectedNodeIds.add(e.target); });
+      const mainNodes: string[] = []; const orphanFinishedNodes: string[] = [];
+      nodes.forEach(n => { if (n.type !== 'task') { mainNodes.push(n.id); return; } const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished'; const isOrphan = !connectedNodeIds.has(n.id); if (isFinished && isOrphan) { orphanFinishedNodes.push(n.id); } else { mainNodes.push(n.id); } });
+      const layout: Record<string, {x: number, y: number}> = {}; const COL_WIDTH = 340; const ROW_HEIGHT = 200;
+      if (mainNodes.length > 0) { const queue = mainNodes.filter(id => inDegree[id] === 0); if (queue.length === 0 && mainNodes.length > 0) queue.push(mainNodes[0]); const levels: Record<string, number> = {}; const visited = new Set<string>(); while(queue.length > 0) { const curr = queue.shift()!; if (visited.has(curr)) continue; visited.add(curr); adjacency[curr]?.forEach(next => { if (mainNodes.includes(next)) { levels[next] = Math.max(levels[next] || 0, (levels[curr] || 0) + 1); if(!visited.has(next)) queue.push(next); } }); } const levelGroups: Record<number, string[]> = {}; let maxLevel = 0; mainNodes.forEach(id => { const lvl = levels[id] || 0; maxLevel = Math.max(maxLevel, lvl); if(!levelGroups[lvl]) levelGroups[lvl] = []; levelGroups[lvl].push(id); }); for (let lvl = 0; lvl <= maxLevel; lvl++) { const currentNodes = levelGroups[lvl] || []; const nodeWithY = currentNodes.map(nodeId => { const nodeParents = parents[nodeId] || []; let avgY = 0; let count = 0; if (nodeParents.length > 0) { nodeParents.forEach(p => { if (layout[p]) { avgY += layout[p].y; count++; } }); } const heuristicY = count > 0 ? avgY / count : Infinity; return { id: nodeId, y: heuristicY }; }); nodeWithY.sort((a, b) => { if (a.y === Infinity && b.y === Infinity) return a.id.localeCompare(b.id); if (a.y === Infinity) return 1; if (b.y === Infinity) return -1; return a.y - b.y; }); let currentY = 0; nodeWithY.forEach((item) => { let y = item.y === Infinity ? currentY : item.y; if (y < currentY) y = currentY; layout[item.id] = { x: lvl * COL_WIDTH, y: y }; currentY = y + ROW_HEIGHT; }); } for (let lvl = maxLevel - 1; lvl >= 0; lvl--) { const currentNodes = levelGroups[lvl] || []; const nodeWithY = currentNodes.map(nodeId => { const nodeChildren = adjacency[nodeId] || []; let avgY = 0; let count = 0; if (nodeChildren.length > 0) { nodeChildren.forEach(c => { if (layout[c]) { avgY += layout[c].y; count++; } }); } const heuristicY = count > 0 ? avgY / count : layout[nodeId].y; return { id: nodeId, y: heuristicY }; }); nodeWithY.sort((a, b) => a.y - b.y); let positions: number[] = []; nodeWithY.forEach((item, idx) => { let y = item.y; if (idx > 0) { const prevY = positions[idx - 1]; if (y < prevY + ROW_HEIGHT) y = prevY + ROW_HEIGHT; } positions.push(y); layout[item.id] = { x: lvl * COL_WIDTH, y: y }; }); } }
+      let maxY = 0; Object.values(layout).forEach(pos => maxY = Math.max(maxY, pos.y)); const START_Y_FOR_FINISHED = maxY + ROW_HEIGHT * 2; const ORPHAN_COL_COUNT = 4; orphanFinishedNodes.forEach((id, idx) => { const row = Math.floor(idx / ORPHAN_COL_COUNT); const col = idx % ORPHAN_COL_COUNT; layout[id] = { x: col * COL_WIDTH, y: START_Y_FOR_FINISHED + (row * ROW_HEIGHT) }; });
+      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] || n.position }))); await plugin.saveBoardData(activeBoardId, { layout }); new Notice("Smart layout applied!"); setTimeout(() => reactFlowInstance.fitView({ padding: 0.2, duration: 800 }), 100);
   };
 
   const handleResetView = async () => { if (!window.confirm("Clear all positions?")) return; await plugin.saveBoardData(activeBoardId, { layout: {} }); setRefreshKey(prev => prev + 1); new Notice("View reset."); };
@@ -602,7 +547,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   return (
     <div className="task-graph-container" onContextMenu={onPaneContextMenu}>
-      <TaskSidebar nodes={nodes} onNodeClick={handleSidebarClick} />
+      <TaskSidebar nodes={nodes} onNodeClick={handleSidebarClick} onStatusChange={updateNodeStatus} />
       <ReactFlow
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
@@ -651,5 +596,10 @@ export class TaskGraphView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: TaskGraphPlugin) { super(leaf); this.plugin = plugin; }
   getViewType() { return VIEW_TYPE_TASK_GRAPH; } getDisplayText() { return "Spatial Task Graph"; } getIcon() { return "network"; }
   async onOpen() { const container = this.containerEl.children[1]; container.empty(); container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); this.root = createRoot(container); this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); }
+  // 🌟 新增：对外暴露刷新方法
+  refresh() {
+      // @ts-ignore
+      if (this.plugin.viewRefresh) this.plugin.viewRefresh();
+  }
   async onClose() { this.root?.unmount(); }
 }

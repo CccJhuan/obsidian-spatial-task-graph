@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, WorkspaceLeaf, TFile, Notice } from 'obsidian';
+import { App, Plugin, PluginSettingTab, WorkspaceLeaf, TFile, Notice, Debouncer, debounce } from 'obsidian';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 
 export interface TextNodeData {
@@ -23,6 +23,8 @@ const DEFAULT_SETTINGS: TaskGraphSettings = { boards: [DEFAULT_BOARD], lastActiv
 
 export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;
+	// 🌟 添加防抖刷新函数，避免频繁文件修改导致视图闪烁
+	requestRefresh: Debouncer<[], void>;
 
 	async onload() {
 		await this.loadSettings();
@@ -30,6 +32,26 @@ export default class TaskGraphPlugin extends Plugin {
 		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
 		this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
 		this.addSettingTab(new TaskGraphSettingTab(this.app, this));
+
+		// 🌟 初始化防抖刷新 (延迟 500ms 执行)
+		this.requestRefresh = debounce(this.triggerViewRefresh.bind(this), 500, true);
+
+		// 🌟 监听元数据缓存变化：实现文件修改后，图谱自动刷新
+		this.registerEvent(
+			this.app.metadataCache.on('changed', (file) => {
+				// 这里可以加判断，只在相关文件变化时刷新，目前简单起见全局刷新
+				this.requestRefresh();
+			})
+		);
+	}
+
+	// 通知所有活跃的视图进行刷新
+	triggerViewRefresh() {
+		this.app.workspace.getLeavesOfType(VIEW_TYPE_TASK_GRAPH).forEach(leaf => {
+			if (leaf.view instanceof TaskGraphView) {
+				leaf.view.refresh();
+			}
+		});
 	}
 
 	async activateView() {
@@ -91,34 +113,19 @@ export default class TaskGraphPlugin extends Plugin {
 		} catch (e) { console.error(e); new Notice("Failed to update task."); }
 	}
 
-	// 🌟 新增：在文件末尾追加新任务，并返回新节点的 ID
 	async appendTaskToFile(filePath: string, taskText: string): Promise<string | null> {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) { new Notice("Source file not found!"); return null; }
-		
 		try {
 			const content = await this.app.vault.read(file);
-			// 确保有换行符
 			const prefix = content.endsWith('\n') ? '' : '\n';
 			const newTaskLine = `- [ ] ${taskText}`;
 			await this.app.vault.append(file, `${prefix}${newTaskLine}`);
-			
-			// 计算新 ID：路径 + 行号 (旧行数)
 			const oldLineCount = content.split('\n').length;
 			const newLineIndex = content.endsWith('\n') ? oldLineCount : oldLineCount; 
-			// 注意：这只是一个极其简化的 ID 预测。在并发高时可能不准，但对于个人使用足够。
-			// 因为 Dataview 索引有延迟，我们先生成一个临时的 ID 或者是基于物理位置的 ID。
-			// 最稳妥的是等待 Cache 更新，但这太慢。我们假设追加到了最后一行。
-			
-			// Obsidian 的行号从 0 开始。
-			// 如果原文件有 10 行 (0-9)，追加后新行是 10。
 			const newId = `${filePath}-${newLineIndex}`; 
 			return newId;
-		} catch (e) {
-			console.error(e);
-			new Notice("Failed to create task.");
-			return null;
-		}
+		} catch (e) { console.error(e); new Notice("Failed to create task."); return null; }
 	}
 
 	async saveBoardData(boardId: string, data: Partial<GraphBoard['data']>) {

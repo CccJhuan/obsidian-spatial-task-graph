@@ -1,90 +1,90 @@
-# Obsidian Sample Plugin
+# Spatial Task Graph for Obsidian <img src="icon.png" alt="Logo" height="24" style="vertical-align: middle;"/>
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+**Spatial Task Graph** is an advanced Obsidian plugin that transforms your linear task lists into an interactive, infinite canvas. It combines the power of **Dataview** indexing with the flexibility of **Mind Mapping**.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Visualize dependencies, manage project status with a HUD sidebar, and organize your thoughts spatially—all without leaving your markdown files.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+_(Place your screenshot `image_e51aba.png` or `image_e53884.jpg` here)_
 
-## First time developing plugins?
+## ✨ Features
 
-Quick starting guide for new plugin devs:
+### 🧠 Spatial Project Management
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+- **Infinite Canvas**: Powered by React Flow, offering a smooth, zoomable workspace to organize tasks visually.
+    
+- **Hybrid Nodes**: Mix real **Markdown Tasks** with purely visual **Text Notes** (Sticky Notes) to brainstorm and structure projects.
+    
+- **Drag-to-Create**: Drag a connection line to an empty space to instantly create a new sub-task linked to the parent file.
+    
 
-## Releasing new releases
+### 🧭 Task HUD & Navigation
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+- **Status at a Glance**: A dedicated "Heads-Up Display" sidebar on the left automatically categorizes your tasks into **In Progress**, **Pending**, and **Backlog**.
+    
+- **Quick Navigation**: Clicking on any task in the sidebar instantly **centers the graph** on that specific node, helping you locate tasks in complex maps without scrolling.
+    
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### 🎛️ Multi-Project Control Panel
 
-## Adding your plugin to the community plugin list
+- **Multiple Boards**: The metadata toolbar in the bottom-right allows you to create and switch between different **Boards** (e.g., "Work", "Personal", "Learning"). Each board preserves its own layout and nodes.
+    
+- **Smart Filtering**: Apply real-time filters to your graph based on **Tags** (e.g., `#urgent`) or **File Paths**. This allows you to focus on specific projects and hide unrelated noise.
+    
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### 📝 Seamless Editing
 
-## How to use
+- **Two-Way Sync**: Changes made in the graph (checkboxes, text edits) are instantly written back to your Markdown files.
+    
+- **Smart Editor**:
+    
+    - **Tag Autocomplete**: Type `#` to get suggestions from your vault's existing tags.
+        
+    - **Metadata Toolbar**: One-click insertion for Tasks plugin formats (📅 Due, 🛫 Start, ⏳ Scheduled, 🔁 Recur, 🔺 Priority).
+        
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## 🚀 Installation
 
-## Manually installing the plugin
+### Manual Installation
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+1. Download the `main.js`, `manifest.json`, and `styles.css` from the latest Release.
+    
+2. Create a folder named `obsidian-spatial-task-graph` in your vault's `.obsidian/plugins/` directory.
+    
+3. Move the downloaded files into that folder.
+    
+4. Reload Obsidian and enable the plugin in Settings.
+    
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+### Development
 
-## Funding URL
+1. Clone this repository.
+    
+2. Run `npm install` to install dependencies.
+    
+3. Run `npm run dev` to start compilation in watch mode.
+    
 
-You can include funding URLs where people who use your plugin can financially support it.
+## 🎮 Usage
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+1. **Open the View**: Click the "Network" icon in the ribbon or use the command `Spatial Task Graph: Open Task Graph`.
+    
+2. **Manage Boards**: Use the bottom-right panel to create new boards for different contexts.
+    
+3. **Connect Tasks**: Drag from a node's right handle to another node's left handle to create a dependency.
+    
+4. **Edit Tasks**:
+    
+    - Click the **Pencil Icon** on a node to edit text, add dates, or change priority.
+        
+    - **Right-click** on the canvas to add a Sticky Note.
+        
+5. **Navigate**: Use the left sidebar to quickly jump to active tasks.
+    
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
+## 🤝 Contributing
 
-If you have multiple URLs, you can also do:
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+## 📄 License
 
-## API Documentation
-
-See https://docs.obsidian.md
+MIT License

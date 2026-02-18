@@ -1,11 +1,10 @@
 {
-	"id": "TasksGraph",
-	"name": "Tasks Graph",
+	"id": "obsidian-spatial-task-graph",
+	"name": "Spatial Task Graph",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
+	"minAppVersion": "1.0.0",
+	"description": "Visualize your Obsidian tasks on an infinite canvas. Features auto-layout, mind-map style connections, Apple-style UI, and two-way sync with markdown files.",
 	"author": "TriumphC",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"authorUrl": "https://github.com/CccJhuan",
 	"isDesktopOnly": false
 }
