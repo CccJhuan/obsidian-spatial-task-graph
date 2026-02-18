@@ -1,92 +1,34 @@
-import { App, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile } from 'obsidian';
+import { App, Plugin, PluginSettingTab, WorkspaceLeaf, TFile, Notice } from 'obsidian';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 
-// --- 数据结构定义 ---
+export interface TextNodeData {
+	id: string; text: string; x: number; y: number;
+}
 
-// 单个看板的配置结构
 export interface GraphBoard {
-	id: string;
-	name: string;
-	filters: {
-		tags: string[];        // 包含这些标签 (OR 逻辑)
-		excludeTags: string[]; // 排除这些标签
-		folders: string[];     // 在这些文件夹内
-		status: string[];      // 任务状态: ' ' (todo), 'x' (done), '/' (progress), '-' (cancel)
-	};
-	// 存储节点位置和连线
-	data: {
-		layout: Record<string, { x: number, y: number }>;
-		edges: any[];
-		groups: any[]; // 存储分组框
-	}
+	id: string; name: string;
+	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; };
+	data: { layout: Record<string, { x: number, y: number }>; edges: any[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; }
 }
 
-// 插件总设置
-interface TaskGraphSettings {
-	boards: GraphBoard[];
-	lastActiveBoardId: string;
-}
+interface TaskGraphSettings { boards: GraphBoard[]; lastActiveBoardId: string; }
 
 const DEFAULT_BOARD: GraphBoard = {
-	id: 'default',
-	name: 'Main Board',
-	filters: {
-		tags: [],
-		excludeTags: [],
-		folders: [],
-		status: [' ', '/'] // 默认只看未完成和进行中
-	},
-	data: { layout: {}, edges: [], groups: [] }
+	id: 'default', name: 'Main Board',
+	filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] },
+	data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] }
 };
 
-const DEFAULT_SETTINGS: TaskGraphSettings = {
-	boards: [DEFAULT_BOARD],
-	lastActiveBoardId: 'default'
-};
-
-// --- 主插件类 ---
+const DEFAULT_SETTINGS: TaskGraphSettings = { boards: [DEFAULT_BOARD], lastActiveBoardId: 'default' };
 
 export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;
 
 	async onload() {
 		await this.loadSettings();
-
-		this.registerView(
-			VIEW_TYPE_TASK_GRAPH,
-			(leaf) => new TaskGraphView(leaf, this)
-		);
-
-		this.addRibbonIcon('network', 'Open Task Graph', () => {
-			this.activateView();
-		});
-
-		this.addCommand({
-			id: 'open-task-graph',
-			name: 'Open Task Graph',
-			callback: () => {
-				this.activateView();
-			}
-		});
-
-		// 添加命令：创建新看板
-		this.addCommand({
-			id: 'create-new-board',
-			name: 'Create New Graph Board',
-			callback: async () => {
-				const newBoard: GraphBoard = {
-					...DEFAULT_BOARD,
-					id: Date.now().toString(),
-					name: `Board ${this.settings.boards.length + 1}`,
-					data: { layout: {}, edges: [], groups: [] } // 深拷贝数据对象
-				};
-				this.settings.boards.push(newBoard);
-				this.settings.lastActiveBoardId = newBoard.id;
-				await this.saveSettings();
-				this.activateView();
-			}
-		});
-
+		this.registerView(VIEW_TYPE_TASK_GRAPH, (leaf) => new TaskGraphView(leaf, this));
+		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
+		this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
 		this.addSettingTab(new TaskGraphSettingTab(this.app, this));
 	}
 
@@ -94,72 +36,30 @@ export default class TaskGraphPlugin extends Plugin {
 		const { workspace } = this.app;
 		let leaf: WorkspaceLeaf | null = null;
 		const leaves = workspace.getLeavesOfType(VIEW_TYPE_TASK_GRAPH);
-
-		if (leaves.length > 0) {
-			leaf = leaves[0];
-			workspace.revealLeaf(leaf);
-		} else {
-			leaf = workspace.getLeaf('tab');
-			await leaf.setViewState({ type: VIEW_TYPE_TASK_GRAPH, active: true });
-			workspace.revealLeaf(leaf);
-		}
+		if (leaves.length > 0) { leaf = leaves[0]; workspace.revealLeaf(leaf); } 
+		else { leaf = workspace.getLeaf('tab'); await leaf.setViewState({ type: VIEW_TYPE_TASK_GRAPH, active: true }); workspace.revealLeaf(leaf); }
 	}
 
-	// --- 核心优化：高性能任务检索 ---
 	async getTasks(boardId: string) {
 		const board = this.settings.boards.find(b => b.id === boardId) || this.settings.boards[0];
 		const filters = board.filters;
-		
 		const files = this.app.vault.getMarkdownFiles();
 		const tasks = [];
-
-		// 预处理筛选条件
-		const hasTagFilter = filters.tags.length > 0;
-		const hasFolderFilter = filters.folders.length > 0;
-		
-		// 性能优化 1: 文件夹过滤 (路径字符串匹配比读取文件快得多)
 		let candidateFiles = files;
-		if (hasFolderFilter) {
-			candidateFiles = files.filter(f => filters.folders.some(folder => f.path.startsWith(folder)));
-		}
+		
+		if (filters.folders.length > 0) { candidateFiles = files.filter(f => filters.folders.some(folder => f.path.startsWith(folder))); }
 
 		for (const file of candidateFiles) {
 			const cache = this.app.metadataCache.getFileCache(file);
 			if (!cache || !cache.listItems) continue;
-
-			// 性能优化 2: 元数据预检 (Metadata First)
-			// 如果设置了必须包含某些标签，先检查缓存里的 tags 列表
-			// 注意：这只能检查文件级或块级标签，行内标签仍需扫描文本，但能过滤掉大部分无关文件
-			if (hasTagFilter && cache.tags) {
-				// 简单的启发式检查：如果文件缓存里根本没有我们需要的标签，可能可以直接跳过
-				// 但考虑到行内标签的复杂性，这里我们暂时不做强过滤，防止漏掉
-			}
-
-			// 只有通过了初步筛选，才读取文件内容 (I/O 操作)
 			const content = await this.app.vault.cachedRead(file);
 			const lines = content.split('\n');
-
 			for (const item of cache.listItems) {
-				if (!item.task) continue; // 必须是任务
-
-				// 1. 状态筛选
-				if (filters.status.length > 0 && !filters.status.includes(item.task)) {
-					continue;
-				}
-
+				if (!item.task) continue;
+				if (filters.status.length > 0 && !filters.status.includes(item.task)) continue;
 				const lineText = lines[item.position.start.line];
-
-				// 2. 包含标签筛选 (OR 逻辑)
-				if (filters.tags.length > 0) {
-					const hasTag = filters.tags.some(tag => lineText.includes(tag));
-					if (!hasTag) continue;
-				}
-
-				// 3. 排除标签筛选 (NOT 逻辑)
-				if (filters.excludeTags.length > 0) {
-					const hasExcludedTag = filters.excludeTags.some(tag => lineText.includes(tag));
-					if (hasExcludedTag) continue;
-				}
+				if (filters.tags.length > 0 && !filters.tags.some(tag => lineText.includes(tag))) continue;
+				if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => lineText.includes(tag))) continue;
 
 				tasks.push({
 					id: `${file.path}-${item.position.start.line}`,
@@ -167,60 +67,92 @@ export default class TaskGraphPlugin extends Plugin {
 					status: item.task,
 					file: file.basename,
 					path: file.path,
-					line: item.position.start.line
+					line: item.position.start.line,
+					rawText: lineText
 				});
 			}
 		}
 		return tasks;
 	}
 
-	// --- 数据持久化 ---
-	
-	async saveBoardData(boardId: string, data: { nodes?: any[], edges?: any[], layout?: any }) {
+	async updateTaskContent(filePath: string, lineNumber: number, newText: string) {
+		const file = this.app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return;
+		try {
+			const content = await this.app.vault.read(file);
+			const lines = content.split('\n');
+			if (lineNumber >= lines.length) return;
+			const originalLine = lines[lineNumber];
+			const match = originalLine.match(/^(\s*- \[[x\s\/bc!-]\]\s)(.*)/);
+			if (match) lines[lineNumber] = match[1] + newText;
+			else lines[lineNumber] = newText;
+			await this.app.vault.modify(file, lines.join('\n'));
+			new Notice("Task updated!");
+		} catch (e) { console.error(e); new Notice("Failed to update task."); }
+	}
+
+	// 🌟 新增：在文件末尾追加新任务，并返回新节点的 ID
+	async appendTaskToFile(filePath: string, taskText: string): Promise<string | null> {
+		const file = this.app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) { new Notice("Source file not found!"); return null; }
+		
+		try {
+			const content = await this.app.vault.read(file);
+			// 确保有换行符
+			const prefix = content.endsWith('\n') ? '' : '\n';
+			const newTaskLine = `- [ ] ${taskText}`;
+			await this.app.vault.append(file, `${prefix}${newTaskLine}`);
+			
+			// 计算新 ID：路径 + 行号 (旧行数)
+			const oldLineCount = content.split('\n').length;
+			const newLineIndex = content.endsWith('\n') ? oldLineCount : oldLineCount; 
+			// 注意：这只是一个极其简化的 ID 预测。在并发高时可能不准，但对于个人使用足够。
+			// 因为 Dataview 索引有延迟，我们先生成一个临时的 ID 或者是基于物理位置的 ID。
+			// 最稳妥的是等待 Cache 更新，但这太慢。我们假设追加到了最后一行。
+			
+			// Obsidian 的行号从 0 开始。
+			// 如果原文件有 10 行 (0-9)，追加后新行是 10。
+			const newId = `${filePath}-${newLineIndex}`; 
+			return newId;
+		} catch (e) {
+			console.error(e);
+			new Notice("Failed to create task.");
+			return null;
+		}
+	}
+
+	async saveBoardData(boardId: string, data: Partial<GraphBoard['data']>) {
 		const boardIndex = this.settings.boards.findIndex(b => b.id === boardId);
 		if (boardIndex === -1) return;
-
-		// 只更新布局、连线和分组，不覆盖过滤器
-		if (data.layout) this.settings.boards[boardIndex].data.layout = data.layout;
-		if (data.edges) this.settings.boards[boardIndex].data.edges = data.edges;
-		// 如果有分组逻辑后续可以加在这里
-
+		const currentData = this.settings.boards[boardIndex].data;
+		if (data.layout) currentData.layout = data.layout;
+		if (data.edges) currentData.edges = data.edges;
+		if (data.nodeStatus) currentData.nodeStatus = data.nodeStatus;
+		if (data.textNodes) currentData.textNodes = data.textNodes;
 		await this.saveSettings();
 	}
 
 	async updateBoardConfig(boardId: string, config: Partial<GraphBoard>) {
 		const boardIndex = this.settings.boards.findIndex(b => b.id === boardId);
 		if (boardIndex === -1) return;
-
 		this.settings.boards[boardIndex] = { ...this.settings.boards[boardIndex], ...config };
 		await this.saveSettings();
 	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-		// 确保数据结构完整
-		if (!this.settings.boards || this.settings.boards.length === 0) {
-			this.settings.boards = [DEFAULT_BOARD];
-		}
+		if (!this.settings.boards || this.settings.boards.length === 0) this.settings.boards = [DEFAULT_BOARD];
+		this.settings.boards.forEach(b => {
+			if (!b.data.nodeStatus) b.data.nodeStatus = {};
+			if (!b.data.textNodes) b.data.textNodes = [];
+		});
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+	async saveSettings() { await this.saveData(this.settings); }
 }
 
 class TaskGraphSettingTab extends PluginSettingTab {
 	plugin: TaskGraphPlugin;
-
-	constructor(app: App, plugin: TaskGraphPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-		containerEl.createEl('h2', { text: 'Task Graph Global Settings' });
-		containerEl.createEl('p', { text: 'Manage specific board filters directly in the Graph View.' });
-	}
+	constructor(app: App, plugin: TaskGraphPlugin) { super(app, plugin); this.plugin = plugin; }
+	display(): void { this.containerEl.empty(); this.containerEl.createEl('h2', { text: 'Task Graph Settings' }); }
 }
