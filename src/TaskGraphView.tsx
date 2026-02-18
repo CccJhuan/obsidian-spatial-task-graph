@@ -24,7 +24,7 @@ import TaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
-// 🌟 核心样式
+// 🌟 核心样式：React Flow 基础
 const REACT_FLOW_CORE_STYLES = `
     .react-flow{direction:ltr;width:100%;height:100%;position:relative;z-index:0;overflow:hidden}
     .react-flow__background{background-color:transparent;z-index:-1;width:100%;height:100%;top:0;left:0;position:absolute}
@@ -218,15 +218,28 @@ const TaskNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
   );
 };
 
-// ... TextNode ...
 const TextNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
     const handleBlur = () => { if (text !== data.label) data.onSave(data.id, text); };
     const rows = Math.max(1, text.split('\n').length);
+    
+    const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
+
     return (
         <div className="text-node-wrapper">
             <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="custom-handle" style={{ left: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
-            <textarea className="text-node-textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={handleBlur} rows={rows} placeholder="Note..." onMouseDown={(e) => e.stopPropagation()} style={{ height: 'auto' }} />
+            <textarea 
+                className="text-node-textarea" 
+                value={text} 
+                onChange={(e) => setText(e.target.value)} 
+                onBlur={handleBlur} 
+                rows={rows} 
+                placeholder="Note..." 
+                onMouseDown={(e) => e.stopPropagation()} 
+                onKeyDown={stopKeys} 
+                onKeyUp={stopKeys}
+                style={{ height: 'auto' }} 
+            />
             <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
             <Handle type="source" position={Position.Bottom} isConnectable={isConnectable} className="custom-handle" style={{ bottom: '-12px', left: '50%', transform: 'translateX(-50%)' }} />
         </div>
@@ -235,7 +248,6 @@ const TextNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
 
 const nodeTypes = { task: TaskNode, text: TextNode };
 
-// ... EditTaskModal ...
 const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText: string, onClose: () => void, onSave: (text: string) => void, allTags: string[] }) => {
     const [text, setText] = React.useState(initialText);
     const [suggestions, setSuggestions] = React.useState<string[]>([]);
@@ -250,12 +262,26 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + '#' + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
     const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
 
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        e.stopPropagation(); 
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave(text); }
+    };
+
     return (
         <div className="edit-overlay" onClick={onClose}>
             <div className="edit-modal" onClick={(e) => e.stopPropagation()}>
                 <h3 style={{ margin: 0, fontWeight: 600, color: 'var(--text-normal)' }}>Edit Task</h3>
                 <div style={{ position: 'relative' }}>
-                    <textarea ref={textareaRef} value={text} onChange={handleInput} style={{ width: '100%', height: '120px', resize: 'vertical', padding: '12px', borderRadius: '8px', border: '1px solid var(--background-modifier-border)', fontSize: '14px', lineHeight: '1.5', background: 'var(--background-secondary)', color: 'var(--text-normal)' }} placeholder="Task description..." />
+                    <textarea 
+                        ref={textareaRef} 
+                        value={text} 
+                        onChange={handleInput}
+                        onKeyDown={handleKeyDown} 
+                        onKeyUp={(e) => e.stopPropagation()} 
+                        style={{ width: '100%', height: '120px', resize: 'vertical', padding: '12px', borderRadius: '8px', border: '1px solid var(--background-modifier-border)', fontSize: '14px', lineHeight: '1.5', background: 'var(--background-secondary)', color: 'var(--text-normal)' }} 
+                        placeholder="Task description..." 
+                        autoFocus
+                    />
                     {suggestions.length > 0 && (<div className="suggestion-list" style={{ top: suggestionPos.top, left: suggestionPos.left }}>{suggestions.map(tag => (<div key={tag} className="suggestion-item" onClick={() => insertTag(tag)}><span style={{opacity:0.6}}>#</span> {tag}</div>))}</div>)}
                 </div>
                 <div className="metadata-toolbar">
@@ -274,7 +300,6 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
     );
 };
 
-// ... Sidebar, Toolbar, ControlPanel ...
 const TaskSidebar = ({ nodes, onNodeClick, onStatusChange }: { nodes: Node[], onNodeClick: (nodeId: string) => void, onStatusChange: (id: string, status: string) => void }) => {
     const tasks = nodes.filter(n => n.type === 'task');
     const inProgress = tasks.filter(n => n.data.customStatus === 'in_progress');
@@ -283,8 +308,7 @@ const TaskSidebar = ({ nodes, onNodeClick, onStatusChange }: { nodes: Node[], on
     const stopProp = (e: React.MouseEvent | React.WheelEvent) => e.stopPropagation();
 
     const handleDragStart = (e: React.DragEvent, nodeId: string) => {
-        e.dataTransfer.setData('nodeId', nodeId);
-        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('nodeId', nodeId); e.dataTransfer.effectAllowed = 'move';
     };
     const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
     const handleDrop = (e: React.DragEvent, targetStatus: string) => {
@@ -294,7 +318,12 @@ const TaskSidebar = ({ nodes, onNodeClick, onStatusChange }: { nodes: Node[], on
     const renderList = (title: string, items: Node[], color: string, className: string, statusKey: string) => (
         <div className="sidebar-section" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
             <div className="sidebar-title" style={{ color: color }}><div style={{ width: 6, height: 6, borderRadius: '50%', background: color }}></div>{title} <span style={{ opacity: 0.5 }}>({items.length})</span></div>
-            <div className="sidebar-list">{items.map(node => (<div key={node.id} className={`sidebar-item item-${className}`} onClick={() => onNodeClick(node.id)} draggable onDragStart={(e) => handleDragStart(e, node.id)}>{node.data.label.replace(/#\S+/g, '').trim()}</div>))}{items.length === 0 && <div style={{ fontSize: '11px', color: 'var(--text-faint)', paddingLeft: '10px' }}>Empty - Drop here</div>}</div>
+            <div className="sidebar-list">
+                {items.map(node => (
+                    <div key={node.id} className={`sidebar-item item-${className}`} onClick={() => onNodeClick(node.id)} draggable onDragStart={(e) => handleDragStart(e, node.id)}>{node.data.label.replace(/#\S+/g, '').trim()}</div>
+                ))}
+                {items.length === 0 && <div style={{ fontSize: '11px', color: 'var(--text-faint)', paddingLeft: '10px' }}>Empty - Drop here</div>}
+            </div>
         </div>
     );
     return (<div className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)' }}>My Tasks</div>{renderList('In Progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
@@ -315,12 +344,13 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     const handleSaveName = () => { if (tempName.trim()) onRenameBoard(tempName); setIsRenaming(false); };
     const handleDelete = () => { if (boards.length <= 1) { new Notice("Cannot delete the only board."); return; } if (window.confirm(`Delete board "${currentBoard.name}"?`)) onDeleteBoard(activeBoardId); };
     const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => { e.stopPropagation(); };
-    
+    const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
+
     const btnStyle = { background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', fontWeight: '500' };
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
     const inputStyle = { background: 'var(--background-modifier-form-field)', border: 'none', color: 'var(--text-normal)', padding: '8px', borderRadius: '8px', width: '100%', marginBottom: '8px', fontSize: '12px' };
     
-    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus onKeyDown={(e) => e.key === 'Enter' && handleSaveName()} /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={onResetView}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
+    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={onAddBoard} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={onAutoLayout}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={onResetView}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => onUpdateFilter('tags', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => onUpdateFilter('folders', e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => onUpdateFilter('status', status)} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
 };
 
 // --- 主图表组件 ---
@@ -333,13 +363,9 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   const [allTags, setAllTags] = React.useState<string[]>([]);
   const reactFlowInstance = useReactFlow();
-  
-  // 🌟 1. 互斥锁
-  const connectionMadeRef = React.useRef(false);
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
-  // 🌟 2. 意图锁：用于存储“待连接”的信息
-  const pendingConnectionRef = React.useRef<{ sourceId: string; targetText: string; timestamp: number } | null>(null);
-
+  const connectionMadeRef = React.useRef(false);
+  
   React.useEffect(() => {
     const styleId = 'task-graph-styles';
     let styleEl = document.getElementById(styleId);
@@ -365,36 +391,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const savedEdges = boardConfig?.data.edges || [];
       const savedNodeStatus = boardConfig?.data.nodeStatus || {};
       const savedTextNodes = boardConfig?.data.textNodes || [];
-
-      // 🌟 核心：自动配对逻辑
-      if (pendingConnectionRef.current) {
-          const { sourceId, targetText, timestamp } = pendingConnectionRef.current;
-          // 只处理 5 秒内的请求，防止旧数据干扰
-          if (Date.now() - timestamp < 5000) {
-              // 在新加载的 tasks 中寻找匹配的节点
-              // 注意：new task 可能包含 '- [ ] ' 前缀，而 targetText 是纯文本，或者反过来
-              // 这里做一个宽松匹配
-              const newNode = tasks.find(t => t.text.includes(targetText) || targetText.includes(t.text));
-              
-              if (newNode) {
-                  // 找到了！创建连线
-                  const newEdge = { 
-                      id: `e${sourceId}-${newNode.id}`, 
-                      source: sourceId, target: newNode.id, 
-                      animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } 
-                  };
-                  // 更新 savedEdges 以便立刻渲染，并保存
-                  savedEdges.push(newEdge);
-                  await plugin.saveBoardData(activeBoardId, { edges: savedEdges });
-                  new Notice("Linked successfully!");
-                  
-                  // 消费掉这个意图
-                  pendingConnectionRef.current = null;
-              }
-          } else {
-              pendingConnectionRef.current = null; // 超时清除
-          }
-      }
 
       const taskNodes: Node[] = tasks.map((t, index) => {
         let posX = savedLayout[t.id]?.x;
@@ -425,12 +421,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
     loadData();
   }, [plugin, activeBoardId, refreshKey]);
 
-  // --- 交互逻辑 ---
-  const onConnectStart = React.useCallback((event: any, params: any) => { 
-      connectionStartRef.current = params; 
-      connectionMadeRef.current = false;
-  }, []);
-
+  const onConnectStart = React.useCallback((event: any, params: any) => { connectionStartRef.current = params; connectionMadeRef.current = false; }, []);
   const onConnectEnd = React.useCallback((event: any) => {
       if (connectionMadeRef.current) return;
       const targetIsPane = event.target.classList.contains('react-flow__pane');
@@ -464,22 +455,39 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   const updateNodeStatus = async (nodeId: string, status: string) => { setNodes((nds) => nds.map((n) => { if (n.id === nodeId) return { ...n, data: { ...n.data, customStatus: status } }; return n; })); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = (board.data as any).nodeStatus || {}; nodeStatus[nodeId] = status; await plugin.saveBoardData(activeBoardId, { nodeStatus } as any); } };
 
-  // 🌟 核心升级：创建任务时不连线，只存意图
+  // 🌟 核心修复：创建任务时，立即写入位置和连线
   const handleCreateTask = async (text: string) => {
       if (!createTarget) return;
-      // 1. 写入文件
-      await plugin.appendTaskToFile(createTarget.sourcePath, text);
-      
-      // 2. 存入意图 (Intent)
-      pendingConnectionRef.current = {
-          sourceId: createTarget.sourceNodeId,
-          targetText: text.trim(), // 存纯文本用于匹配
-          timestamp: Date.now()
-      };
+      const newId = await plugin.appendTaskToFile(createTarget.sourcePath, text);
+      if (newId) {
+          // 1. 获取父节点位置
+          const parentNode = nodes.find(n => n.id === createTarget.sourceNodeId);
+          let newX = 0, newY = 0;
+          if (parentNode) {
+              newX = parentNode.position.x + 400; // 放在右侧
+              newY = parentNode.position.y;
+          }
 
-      // 3. 关闭弹窗，不用手动刷新，因为 appendTaskToFile 会触发文件修改 -> 触发 metadataCache -> 触发自动刷新
-      setCreateTarget(null);
-      new Notice("Creating task...");
+          // 2. 构造新的连线
+          const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } };
+          
+          // 3. 立即保存所有数据 (Edge + Layout)
+          const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+          if (board) {
+              const edges = [...board.data.edges, newEdge];
+              const layout = { ...board.data.layout, [newId]: { x: newX, y: newY } };
+              
+              // 关键：同时保存 edges 和 layout，确保刷新后两者都有
+              // 我们需要合并 save 操作或者手动更新 settings
+              board.data.edges = edges;
+              board.data.layout = layout;
+              await plugin.saveSettings(); // 保存整个设置
+          }
+          
+          setCreateTarget(null); new Notice("Creating task...");
+          // 触发刷新，loadData 会读到刚才保存的 edge 和 layout
+          setRefreshKey(prev => prev + 1);
+      }
   };
 
   const onConnect = React.useCallback((params: Connection) => { connectionMadeRef.current = true; setEdges((eds) => { const newEdges = addEdge({ ...params, animated: true, style: { stroke: 'var(--text-accent)', strokeWidth: 2 } }, eds); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); }, [plugin, activeBoardId, setEdges]);

@@ -1,89 +1,91 @@
 # Spatial Task Graph for Obsidian <img src="icon.png" alt="Logo" height="24" style="vertical-align: middle;"/>
 
-**Spatial Task Graph** is an advanced Obsidian plugin that transforms your linear task lists into an interactive, infinite canvas. It combines the power of **Dataview** indexing with the flexibility of **Mind Mapping**.
+**Spatial Task Graph** transforms your linear Obsidian tasks into a dynamic, interactive infinite canvas. Visualize dependencies, manage workflows with a Kanban-style sidebar, and organize your thoughts spatially—all with a premium Apple-style aesthetic.
 
-Visualize dependencies, manage project status with a HUD sidebar, and organize your thoughts spatially—all without leaving your markdown files.
+## ✨ Key Features
 
-_(Place your screenshot `image_e51aba.png` or `image_e53884.jpg` here)_
+### 1. Intuitive Graph Interactions
 
-## ✨ Features
+Manage your tasks spatially with fluid mouse gestures.
 
-### 🧠 Spatial Project Management
-
-- **Infinite Canvas**: Powered by React Flow, offering a smooth, zoomable workspace to organize tasks visually.
+- **Connect & Organize**: Drag from one node handles to another to create dependencies. Right-click an edge to delete it.
     
-- **Hybrid Nodes**: Mix real **Markdown Tasks** with purely visual **Text Notes** (Sticky Notes) to brainstorm and structure projects.
+- **Smart Selection**: Hold `Left Click` to box-select multiple nodes and move them as a group.
     
-- **Drag-to-Create**: Drag a connection line to an empty space to instantly create a new sub-task linked to the parent file.
+- **Mind Mapping**: Right-click anywhere on the canvas to add **Text Notes** (Sticky Notes) for headers or context.
     
 
-### 🧭 Task HUD & Navigation
+|   |   |   |
+|---|---|---|
+|**Connections**|**Box Selection**|**Text Notes**|
+||||
 
-- **Status at a Glance**: A dedicated "Heads-Up Display" sidebar on the left automatically categorizes your tasks into **In Progress**, **Pending**, and **Backlog**.
-    
-- **Quick Navigation**: Clicking on any task in the sidebar instantly **centers the graph** on that specific node, helping you locate tasks in complex maps without scrolling.
-    
+### 2. Seamless Creation Flow
 
-### 🎛️ Multi-Project Control Panel
+Don't break your flow. Create new tasks directly from the canvas.
 
-- **Multiple Boards**: The metadata toolbar in the bottom-right allows you to create and switch between different **Boards** (e.g., "Work", "Personal", "Learning"). Each board preserves its own layout and nodes.
-    
-- **Smart Filtering**: Apply real-time filters to your graph based on **Tags** (e.g., `#urgent`) or **File Paths**. This allows you to focus on specific projects and hide unrelated noise.
+- **Drag-to-Create**: Drag a connection line to an empty space to instantly open the creation modal. The new task is automatically appended to the parent file and linked.
     
 
-### 📝 Seamless Editing
+### 3. Powerful Workflow Management
 
-- **Two-Way Sync**: Changes made in the graph (checkboxes, text edits) are instantly written back to your Markdown files.
+Manage task status directly without opening files.
+
+- **Interactive Sidebar**: Drag and drop tasks between **In Progress**, **Pending**, and **Backlog** in the left sidebar to switch their status instantly.
     
-- **Smart Editor**:
+- **Real-time Sync**: Click the checkbox circle on a node to complete it. The change is immediately written to your markdown file with a timestamp (Tasks plugin format).
     
-    - **Tag Autocomplete**: Type `#` to get suggestions from your vault's existing tags.
-        
-    - **Metadata Toolbar**: One-click insertion for Tasks plugin formats (📅 Due, 🛫 Start, ⏳ Scheduled, 🔁 Recur, 🔺 Priority).
-        
+- **Quick Navigation**: Click any task text to jump directly to the source file.
+    
+
+|   |   |
+|---|---|
+|**Sidebar Drag & Drop**|**Click to Toggle**|
+|||
+
+### 4. Smart Layout & Context Menu
+
+- **Auto Layout**: One click on the `⚡ Layout` button automatically arranges your graph. It intelligently centers parent nodes and sinks completed tasks to the bottom.
+    
+- **Context Menu**: Right-click any task node to quickly change its priority or status color.
+    
 
 ## 🚀 Installation
 
 ### Manual Installation
 
-1. Download the `main.js`, `manifest.json`, and `styles.css` from the latest Release.
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [Latest Release](https://www.google.com/search?q=https://github.com/TriumphC/obsidian-spatial-task-graph/releases "null").
     
-2. Create a folder named `obsidian-spatial-task-graph` in your vault's `.obsidian/plugins/` directory.
+2. Create a folder `obsidian-spatial-task-graph` in your vault's `.obsidian/plugins/` directory.
     
-3. Move the downloaded files into that folder.
+3. Move the files into that folder.
     
-4. Reload Obsidian and enable the plugin in Settings.
-    
-
-### Development
-
-1. Clone this repository.
-    
-2. Run `npm install` to install dependencies.
-    
-3. Run `npm run dev` to start compilation in watch mode.
+4. Reload Obsidian and enable the plugin.
     
 
-## 🎮 Usage
+## 🎮 Usage Guide
 
-1. **Open the View**: Click the "Network" icon in the ribbon or use the command `Spatial Task Graph: Open Task Graph`.
+### The Interface
+
+- **Left Sidebar (HUD)**: Your cockpit. Shows all tasks categorized by status. Click to center the view; Drag to change status.
     
-2. **Manage Boards**: Use the bottom-right panel to create new boards for different contexts.
+- **Bottom Right (Control Panel)**: Switch between different **Boards**, apply filters (Tags/Paths), and trigger Auto Layout.
     
-3. **Connect Tasks**: Drag from a node's right handle to another node's left handle to create a dependency.
+- **Top Left (Toolbar)**: Zoom and Fit View controls.
     
-4. **Edit Tasks**:
+
+### Editing Tasks
+
+- Click the **Pencil Icon** on a node to edit.
     
-    - Click the **Pencil Icon** on a node to edit text, add dates, or change priority.
-        
-    - **Right-click** on the canvas to add a Sticky Note.
-        
-5. **Navigate**: Use the left sidebar to quickly jump to active tasks.
+- Type `#` to autocomplete tags.
+    
+- Use the metadata toolbar to insert Dates (`📅`), Priorities (`🔺`), and more.
     
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please create an issue or submit a Pull Request.
 
 ## 📄 License
 
