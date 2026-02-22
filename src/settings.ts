@@ -1,36 +1,30 @@
-import {App, PluginSettingTab, Setting} from "obsidian";
-import MyPlugin from "./main";
+import { App, PluginSettingTab, Setting } from "obsidian";
+import SpatialTaskGraphPlugin from "./main"; // 确保与 main.ts 里的类名一致
 
-export interface MyPluginSettings {
-	mySetting: string;
-}
+export class TaskGraphSettingTab extends PluginSettingTab {
+    plugin: SpatialTaskGraphPlugin;
 
-export const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+    constructor(app: App, plugin: SpatialTaskGraphPlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
 
-export class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+    display(): void {
+        const { containerEl } = this;
 
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+        containerEl.empty();
 
-	display(): void {
-		const {containerEl} = this;
+        containerEl.createEl('h2', { text: 'Spatial Task Graph Settings' });
 
-		containerEl.empty();
+        // 示例设置项：你可以根据需要修改或添加
+        new Setting(containerEl)
+            .setName('Plugin Information')
+            .setDesc('Visualize your Obsidian tasks on an infinite canvas.')
+            .addButton(btn => btn
+                .setButtonText('View Documentation')
+                .onClick(() => {
+                    window.open('https://github.com/CccJhuan/obsidian-spatial-task-graph');
+                }));
 
-		new Setting(containerEl)
-			.setName('Settings #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+    }
 }

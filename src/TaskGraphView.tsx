@@ -17,11 +17,12 @@ import ReactFlow, {
   useReactFlow,
   SelectionMode,
   OnConnectStart,
-  OnConnectEnd
+  OnConnectEnd,
+  ConnectionLineType
 } from 'reactflow';
 import 'reactflow/dist/style.css'; 
 
-import TaskGraphPlugin, { GraphBoard } from './main';
+import SpatialTaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
@@ -172,8 +173,9 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
 
     const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const val = e.target.value; setText(val);
+        setText(val);
         const cursorPos = e.target.selectionStart; const textBeforeCursor = val.slice(0, cursorPos); const match = textBeforeCursor.match(/#([\w\u4e00-\u9fa5]*)$/);
-        if (match) { const query = match[1].toLowerCase(); const filtered = allTags.filter(t => t.toLowerCase().includes(query)).slice(0, 10); if (filtered.length > 0) { setSuggestions(filtered); setSuggestionPos({ top: 140, left: 30 }); } else { setSuggestions([]); } } else { setSuggestions([]); }
+        if (match) { const query = (match[1] || '').toLowerCase(); const filtered = allTags.filter(t => t.toLowerCase().includes(query)).slice(0, 10); if (filtered.length > 0) { setSuggestions(filtered); setSuggestionPos({ top: 140, left: 30 }); } else { setSuggestions([]); } } else { setSuggestions([]); }
     };
     const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + '#' + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
     const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
@@ -254,7 +256,7 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
 };
 
 // --- 主图表组件 ---
-const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
+const TaskGraphComponent = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [activeBoardId, setActiveBoardId] = React.useState(plugin.settings.lastActiveBoardId);
@@ -277,7 +279,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   React.useEffect(() => { 
       // @ts-ignore
-      plugin.viewRefresh = () => setRefreshKey(prev => prev + 1); 
+      plugin.viewRefresh = () => setRefreshKey((prev: number) => prev + 1); 
   }, []);
 
   React.useEffect(() => {
@@ -292,10 +294,13 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const savedNodeStatus = boardConfig?.data.nodeStatus || {};
       const savedTextNodes = boardConfig?.data.textNodes || [];
 
-      const taskNodes: Node[] = tasks.map((t, index) => {
+      const taskNodes: Node[] = tasks.map((t: any, index: number) => {
         let posX = savedLayout[t.id]?.x;
         let posY = savedLayout[t.id]?.y;
-        if (typeof posX !== 'number' || isNaN(posX)) { posX = (index % 3) * 320; posY = Math.floor(index / 3) * 200; }
+        if (typeof posX !== 'number' || isNaN(posX) || typeof posY !== 'number' || isNaN(posY)) { 
+            posX = (index % 3) * 320; 
+            posY = Math.floor(index / 3) * 200; 
+        }
         let finalCustomStatus = savedNodeStatus[t.id] || 'default';
         if (t.status === 'x') finalCustomStatus = 'finished';
 
@@ -336,17 +341,20 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const node = nodes.find(n => n.id === id); if (!node) return;
       const newStatus = (currentStatus === ' ' || currentStatus === '/') ? 'x' : ' ';
       const newCustomStatus = newStatus === 'x' ? 'finished' : 'backlog'; 
-      setNodes(nds => nds.map(n => { if (n.id === id) { return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; } return n; }));
+      setNodes((nds: Node[]) => nds.map((n: Node) =>{ if (n.id === id) { return { ...n, data: { ...n.data, status: newStatus, customStatus: newCustomStatus } }; } return n; }));
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const nodeStatus = board.data.nodeStatus || {}; nodeStatus[id] = newCustomStatus; await plugin.saveBoardData(activeBoardId, { nodeStatus }); }
       const file = plugin.app.vault.getAbstractFileByPath(node.data.path);
       if (file instanceof TFile) {
            const content = await plugin.app.vault.read(file); const lines = content.split('\n');
            if (lines.length > node.data.line) {
-               let line = lines[node.data.line]; line = line.replace(/(- \[)(.)(\])/, `$1${newStatus}$3`);
-               const today = new Date(); const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-               const completionTag = ` ✅ ${dateStr}`; const completionRegex = / ✅ \d{4}-\d{2}-\d{2}/g;
-               if (newStatus === 'x') { if (!completionRegex.test(line)) { line = line.trimEnd() + completionTag; } } else { line = line.replace(completionRegex, ''); }
-               lines[node.data.line] = line; await plugin.app.vault.modify(file, lines.join('\n'));
+               let line = lines[node.data.line];
+               if (typeof line === 'string') { // 扩大防线范围并限定类型
+                   line = line.replace(/(- \[)(.)(\])/, `$1${newStatus}$3`);
+                   const today = new Date(); const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                   const completionTag = ` ✅ ${dateStr}`; const completionRegex = / ✅ \d{4}-\d{2}-\d{2}/g;
+                   if (newStatus === 'x') { if (!completionRegex.test(line)) { line = line.trimEnd() + completionTag; } } else { line = line.replace(completionRegex, ''); }
+                   lines[node.data.line] = line; await plugin.app.vault.modify(file, lines.join('\n'));
+               }
            }
       }
   };
@@ -362,7 +370,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           const newEdge = { id: `e${createTarget.sourceNodeId}-${newId}`, source: createTarget.sourceNodeId, target: newId, animated: true };
           const board = plugin.settings.boards.find(b => b.id === activeBoardId);
           if (board) { board.data.edges = [...board.data.edges, newEdge]; board.data.layout = { ...board.data.layout, [newId]: { x: newX, y: newY } }; await plugin.saveSettings(); }
-          setCreateTarget(null); setRefreshKey(prev => prev + 1);
+          setCreateTarget(null); setRefreshKey((prev: number) => prev + 1);
       }
   };
 
@@ -381,13 +389,13 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           animated: true 
       };
 
-      setNodes(nds => nds.map(n => {
+      setNodes((nds: Node[]) => nds.map((n: Node) =>{
           if (n.id === params.source) return { ...n, id: newSourceId };
           if (n.id === params.target) return { ...n, id: newTargetId };
           return n;
       }));
 
-      setEdges((eds) => {
+      setEdges((eds: Edge[]) => {
           const updatedEds = eds.map(e => {
               let eSource = e.source === params.source ? newSourceId : (e.source === params.target ? newTargetId : e.source);
               let eTarget = e.target === params.source ? newSourceId : (e.target === params.target ? newTargetId : e.target);
@@ -404,10 +412,10 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           await plugin.saveSettings(); 
       }
       
-      setRefreshKey(prev => prev + 1);
+      setRefreshKey((prev: number) => prev + 1);
   }, [plugin, activeBoardId, setEdges, setNodes]);
 
-  const onNodeDragStop = React.useCallback((event: any, node: Node) => { setNodes((nds) => nds.map(n => n.id === node.id ? node : n)); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(!board) return; if (node.type === 'task') { const layout = { ...board.data.layout, [node.id]: node.position }; plugin.saveBoardData(activeBoardId, { layout }); } else if (node.type === 'text') { const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); plugin.saveBoardData(activeBoardId, { textNodes }); } }, [plugin, activeBoardId, setNodes]);
+  const onNodeDragStop = React.useCallback((event: any, node: Node) => { setNodes((nds: Node[]) => nds.map(n => n.id === node.id ? node : n)); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(!board) return; if (node.type === 'task') { const layout = { ...board.data.layout, [node.id]: node.position }; plugin.saveBoardData(activeBoardId, { layout }); } else if (node.type === 'text') { const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); plugin.saveBoardData(activeBoardId, { textNodes }); } }, [plugin, activeBoardId, setNodes]);
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
   const handleEditTask = (taskData: any) => { setEditTarget({ id: taskData.id, text: taskData.label, path: taskData.path, line: taskData.line }); };
   const saveTaskEdit = async (text: string) => { if (!editTarget) return; await plugin.updateTaskContent(editTarget.path, editTarget.line, text); setEditTarget(null); };
@@ -417,12 +425,12 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       menu.addItem((item) => item.setTitle('Add Note').setIcon('sticky-note').onClick(async () => {
           const bounds = (event.target as HTMLElement).getBoundingClientRect(); const position = reactFlowInstance.project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
           const newNode = { id: `text-${Date.now()}`, text: 'New Note', x: position.x, y: position.y };
-          const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); }
+          const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = [...(board.data.textNodes || []), newNode]; await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey((prev: number) => prev + 1); }
       }));
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, reactFlowInstance]);
 
-  const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => { event.preventDefault(); event.stopPropagation(); setEdges((eds) => { const newEdges = eds.filter((e) => e.id !== edge.id); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); new Notice("Connection removed"); }, [plugin, activeBoardId, setEdges]);
+  const onEdgeContextMenu = React.useCallback((event: React.MouseEvent, edge: Edge) => { event.preventDefault(); event.stopPropagation(); setEdges((eds: Edge[]) => { const newEdges = eds.filter((e) => e.id !== edge.id); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); new Notice("Connection removed"); }, [plugin, activeBoardId, setEdges]);
   
   const onNodeContextMenu = React.useCallback((event: React.MouseEvent, node: Node) => {
       event.preventDefault(); event.stopPropagation(); const menu = new Menu();
@@ -433,16 +441,22 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           menu.addItem((item) => item.setTitle('🔴 Blocked').onClick(() => updateNodeStatus(node.id, 'blocked')));
           menu.addItem((item) => item.setTitle('🟣 Finished').onClick(() => updateNodeStatus(node.id, 'finished')));
       } else if (node.type === 'text') {
-          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(async () => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = board.data.textNodes.filter(tn => tn.id !== node.id); await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey(prev => prev + 1); } }));
+          menu.addItem((item) => item.setTitle('🗑 Delete Note').onClick(async () => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (board) { const textNodes = board.data.textNodes.filter(tn => tn.id !== node.id); await plugin.saveBoardData(activeBoardId, { textNodes }); setRefreshKey((prev: number) => prev + 1); } }));
       }
       menu.showAtPosition({ x: event.nativeEvent.clientX, y: event.nativeEvent.clientY });
   }, [plugin, activeBoardId, nodes]);
 
   const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; plugin.saveSettings(); };
   const handleAddBoard = async () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
-  const handleDeleteBoard = async (id: string) => { const newBoards = plugin.settings.boards.filter(b => b.id !== id); plugin.settings.boards = newBoards; const nextBoard = newBoards[0]; setActiveBoardId(nextBoard.id); plugin.settings.lastActiveBoardId = nextBoard.id; await plugin.saveSettings(); };
-  const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
-  const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
+  const handleDeleteBoard = async (id: string) => { const newBoards = plugin.settings.boards.filter(b => b.id !== id); plugin.settings.boards = newBoards; const nextBoard = newBoards[0];
+    if (nextBoard) {
+        setActiveBoardId(nextBoard.id); 
+        plugin.settings.lastActiveBoardId = nextBoard.id; 
+    } else {
+        setActiveBoardId('default'); // 兜底
+    } await plugin.saveSettings(); };
+  const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey((prev: number) => prev + 1); };
+  const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey((prev: number) => prev + 1); };
   
   // 🌟 修复后的核心算法：自然继承无引力排版
   const handleAutoLayout = async () => {
@@ -452,8 +466,8 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
       nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; });
       edges.forEach(e => { 
-          if (adjacency[e.source]) adjacency[e.source].push(e.target); 
-          if (parents[e.target]) parents[e.target].push(e.source); 
+          if (adjacency[e.source]) adjacency[e.source]!.push(e.target);
+          if (parents[e.target]) parents[e.target]!.push(e.source);
           connectedNodeIds.add(e.source);
           connectedNodeIds.add(e.target);
       });
@@ -484,8 +498,8 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               changed = false;
               edges.forEach(e => {
                   if (levels[e.source] !== undefined && levels[e.target] !== undefined) {
-                      if (levels[e.target] <= levels[e.source]) { 
-                          levels[e.target] = levels[e.source] + 1; changed = true;
+                      if (levels[e.target]! <= levels[e.source]!) { 
+                          levels[e.target] = levels[e.source]! + 1; changed = true;
                       }
                   }
               });
@@ -495,9 +509,12 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           const levelGroups: Record<number, string[]> = {};
           let maxLevel = 0;
           connectedTaskIds.forEach(id => {
-              const lvl = levels[id]; maxLevel = Math.max(maxLevel, lvl);
-              if (!levelGroups[lvl]) levelGroups[lvl] = [];
-              levelGroups[lvl].push(id);
+              const lvl = levels[id];
+              if (lvl !== undefined) {
+                maxLevel = Math.max(maxLevel, lvl);
+                if (!levelGroups[lvl]) levelGroups[lvl] = [];
+                levelGroups[lvl]!.push(id);
+            }
           });
 
           for (let lvl = 0; lvl <= maxLevel; lvl++) {
@@ -574,7 +591,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           });
       }
 
-      setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] || n.position }))); 
+      setNodes((nds: Node[]) => nds.map((n: Node) =>({ ...n, position: layout[n.id] || n.position }))); 
       
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
@@ -584,8 +601,8 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       new Notice("Smart layout applied!"); 
   };
 
-  const handleResetView = async () => { if (!window.confirm("Clear all positions?")) return; await plugin.saveBoardData(activeBoardId, { layout: {} }); setRefreshKey(prev => prev + 1); new Notice("View reset."); };
-  const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === nodeId }))); } };
+  const handleResetView = async () => { if (!window.confirm("Clear all positions?")) return; await plugin.saveBoardData(activeBoardId, { layout: {} }); setRefreshKey((prev: number) => prev + 1); new Notice("View reset."); };
+  const handleSidebarClick = (nodeId: string) => { const node = nodes.find(n => n.id === nodeId); if (node) { reactFlowInstance.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1.2, duration: 800 }); setNodes((nds: Node[]) => nds.map((n: Node) =>({ ...n, selected: n.id === nodeId }))); } };
 
   return (
     <div className="task-graph-container" onContextMenu={onPaneContextMenu}>
@@ -607,7 +624,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         panOnScroll={true} zoomOnScroll={true} preventScrolling={false}
         selectionOnDrag={true} selectionMode={SelectionMode.Partial} panOnDrag={[1]} panActivationKeyCode="Space" multiSelectionKeyCode="Shift"
         connectionLineStyle={{ stroke: 'var(--interactive-accent)', strokeWidth: 2, strokeDasharray: '5,5' }}
-        connectionLineType="smoothstep"
+        connectionLineType={ConnectionLineType.SmoothStep}
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
         <GraphToolbar />
@@ -625,12 +642,23 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   );
 };
 
-const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /> </ReactFlowProvider> ); };
+const TaskGraphWithProvider = ({ plugin }: { plugin: SpatialTaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /> </ReactFlowProvider> ); };
 export class TaskGraphView extends ItemView {
-  plugin: TaskGraphPlugin; root: Root | null = null;
-  constructor(leaf: WorkspaceLeaf, plugin: TaskGraphPlugin) { super(leaf); this.plugin = plugin; }
+  plugin: SpatialTaskGraphPlugin; root: Root | null = null;
+  constructor(leaf: WorkspaceLeaf, plugin: SpatialTaskGraphPlugin) { super(leaf); this.plugin = plugin; }
   getViewType() { return VIEW_TYPE_TASK_GRAPH; } getDisplayText() { return "Spatial Task Graph"; } getIcon() { return "network"; }
-  async onOpen() { const container = this.containerEl.children[1]; container.empty(); container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); this.root = createRoot(container); this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); }
+  async onOpen() {
+    const container = this.contentEl; // 更稳健的写法
+    container.empty();
+    container.addClass('spatial-task-graph-root'); // 增加类名方便调试
+    
+    this.root = createRoot(container);
+    this.root.render(
+        <React.StrictMode>
+            <TaskGraphWithProvider plugin={this.plugin} />
+        </React.StrictMode>
+    );
+    }
   refresh() { if (this.plugin.viewRefresh) this.plugin.viewRefresh(); }
   async onClose() { this.root?.unmount(); }
 }
