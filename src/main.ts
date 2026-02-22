@@ -1,9 +1,7 @@
-import { App, Plugin, PluginSettingTab, WorkspaceLeaf, TFile, Notice, Debouncer, debounce } from 'obsidian';
+import { App, Plugin, WorkspaceLeaf, TFile } from 'obsidian';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 
-export interface TextNodeData {
-	id: string; text: string; x: number; y: number;
-}
+export interface TextNodeData { id: string; text: string; x: number; y: number; }
 
 export interface GraphBoard {
 	id: string; name: string;
@@ -18,40 +16,27 @@ const DEFAULT_BOARD: GraphBoard = {
 	filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] },
 	data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] }
 };
-
 const DEFAULT_SETTINGS: TaskGraphSettings = { boards: [DEFAULT_BOARD], lastActiveBoardId: 'default' };
 
 export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;
-	// 🌟 添加防抖刷新函数，避免频繁文件修改导致视图闪烁
-	requestRefresh: Debouncer<[], void>;
+	viewRefresh?: () => void;
 
 	async onload() {
 		await this.loadSettings();
 		this.registerView(VIEW_TYPE_TASK_GRAPH, (leaf) => new TaskGraphView(leaf, this));
 		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
 		this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
-		this.addSettingTab(new TaskGraphSettingTab(this.app, this));
+		
+        // 🌟 移除空的设置界面，保持插件轻量
+		// this.addSettingTab(new TaskGraphSettingTab(this.app, this));
 
-		// 🌟 初始化防抖刷新 (延迟 500ms 执行)
-		this.requestRefresh = debounce(this.triggerViewRefresh.bind(this), 500, true);
-
-		// 🌟 监听元数据缓存变化：实现文件修改后，图谱自动刷新
+        // 监听文件变化，自动刷新视图
 		this.registerEvent(
-			this.app.metadataCache.on('changed', (file) => {
-				// 这里可以加判断，只在相关文件变化时刷新，目前简单起见全局刷新
-				this.requestRefresh();
+			this.app.metadataCache.on('changed', () => {
+				if (this.viewRefresh) this.viewRefresh();
 			})
 		);
-	}
-
-	// 通知所有活跃的视图进行刷新
-	triggerViewRefresh() {
-		this.app.workspace.getLeavesOfType(VIEW_TYPE_TASK_GRAPH).forEach(leaf => {
-			if (leaf.view instanceof TaskGraphView) {
-				leaf.view.refresh();
-			}
-		});
 	}
 
 	async activateView() {
@@ -76,6 +61,7 @@ export default class TaskGraphPlugin extends Plugin {
 			if (!cache || !cache.listItems) continue;
 			const content = await this.app.vault.cachedRead(file);
 			const lines = content.split('\n');
+
 			for (const item of cache.listItems) {
 				if (!item.task) continue;
 				if (filters.status.length > 0 && !filters.status.includes(item.task)) continue;
@@ -83,9 +69,32 @@ export default class TaskGraphPlugin extends Plugin {
 				if (filters.tags.length > 0 && !filters.tags.some(tag => lineText.includes(tag))) continue;
 				if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => lineText.includes(tag))) continue;
 
+                // 🌟 核心升级：双轨制稳定 ID 系统
+                let stableId = "";
+                // 1. 优先寻找 Obsidian 原生 Block ID (如 ^1a2b3c)
+                const blockIdMatch = lineText.match(/\s\^([a-zA-Z0-9\-]+)$/);
+                
+                if (blockIdMatch) {
+                    // 如果存在块 ID，这是最绝对稳定的，随便你怎么改文字都不会变
+                    stableId = `${file.path}::${blockIdMatch[1]}`;
+                } else {
+                    // 2. 兜底逻辑：纯文本哈希 (过滤掉日期、标签等易变元素)
+                    const baseText = lineText.replace(/- \[[x\s\/bc!-]\]\s/, '').trim();
+                    const cleanText = baseText.replace(/ ✅ \d{4}-\d{2}-\d{2}/, '').trim();
+                    const textHash = cleanText.substring(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+                    stableId = `${file.path}::${textHash}`;
+                    
+                    // 处理完全重复的文本
+                    let counter = 0;
+                    while(tasks.some(t => t.id === stableId)) { counter++; stableId = `${file.path}::${textHash}_${counter}`; }
+                }
+
+                // 提取展示用的纯文本（去除结尾的 Block ID，让图谱里看起来干净）
+                const displayText = lineText.replace(/- \[[x\s\/bc!-]\]\s/, '').replace(/\s\^([a-zA-Z0-9\-]+)$/, '').trim();
+
 				tasks.push({
-					id: `${file.path}-${item.position.start.line}`,
-					text: lineText.replace(/- \[.\] /, '').trim(),
+					id: stableId,
+					text: displayText,
 					status: item.task,
 					file: file.basename,
 					path: file.path,
@@ -105,27 +114,37 @@ export default class TaskGraphPlugin extends Plugin {
 			const lines = content.split('\n');
 			if (lineNumber >= lines.length) return;
 			const originalLine = lines[lineNumber];
-			const match = originalLine.match(/^(\s*- \[[x\s\/bc!-]\]\s)(.*)/);
-			if (match) lines[lineNumber] = match[1] + newText;
-			else lines[lineNumber] = newText;
+            
+            // 🌟 保护机制：如果原行有块 ID，在更新文本时保留它
+            const blockIdMatch = originalLine.match(/(\s\^[a-zA-Z0-9\-]+)$/);
+            const blockIdStr = blockIdMatch ? blockIdMatch[1] : '';
+
+			const match = originalLine.match(/^(\s*- \[[x\s\/bc!-]\]\s)/);
+			if (match) {
+                // 将 checkbox、新文本、原有的块ID拼回去
+                lines[lineNumber] = match[1] + newText + blockIdStr;
+            } else {
+                lines[lineNumber] = newText + blockIdStr;
+            }
 			await this.app.vault.modify(file, lines.join('\n'));
-			new Notice("Task updated!");
-		} catch (e) { console.error(e); new Notice("Failed to update task."); }
+		} catch (e) { console.error(e); }
 	}
 
 	async appendTaskToFile(filePath: string, taskText: string): Promise<string | null> {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) { new Notice("Source file not found!"); return null; }
+		if (!(file instanceof TFile)) return null;
 		try {
 			const content = await this.app.vault.read(file);
 			const prefix = content.endsWith('\n') ? '' : '\n';
-			const newTaskLine = `- [ ] ${taskText}`;
+            
+            // 🌟 自动注入机制：插件创建的任务，天生带有随机块 ID
+            const randomBlockId = Math.random().toString(36).substring(2, 8); // 生成类似 1a2b3c 的 6 位标识符
+			const newTaskLine = `- [ ] ${taskText} ^${randomBlockId}`;
 			await this.app.vault.append(file, `${prefix}${newTaskLine}`);
-			const oldLineCount = content.split('\n').length;
-			const newLineIndex = content.endsWith('\n') ? oldLineCount : oldLineCount; 
-			const newId = `${filePath}-${newLineIndex}`; 
-			return newId;
-		} catch (e) { console.error(e); new Notice("Failed to create task."); return null; }
+            
+            // 直接返回带块 ID 的绝对稳定标识
+            return `${filePath}::${randomBlockId}`;
+		} catch (e) { return null; }
 	}
 
 	async saveBoardData(boardId: string, data: Partial<GraphBoard['data']>) {
@@ -149,17 +168,6 @@ export default class TaskGraphPlugin extends Plugin {
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		if (!this.settings.boards || this.settings.boards.length === 0) this.settings.boards = [DEFAULT_BOARD];
-		this.settings.boards.forEach(b => {
-			if (!b.data.nodeStatus) b.data.nodeStatus = {};
-			if (!b.data.textNodes) b.data.textNodes = [];
-		});
 	}
-
 	async saveSettings() { await this.saveData(this.settings); }
-}
-
-class TaskGraphSettingTab extends PluginSettingTab {
-	plugin: TaskGraphPlugin;
-	constructor(app: App, plugin: TaskGraphPlugin) { super(app, plugin); this.plugin = plugin; }
-	display(): void { this.containerEl.empty(); this.containerEl.createEl('h2', { text: 'Task Graph Settings' }); }
 }
