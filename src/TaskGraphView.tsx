@@ -110,8 +110,8 @@ const CUSTOM_STYLES = `
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
 const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
 
-// --- 组件：任务节点 ---
-const TaskNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
+// 🌟 性能优化：使用 React.memo 包裹节点，防止拖拽时引发全局渲染重绘，彻底解决卡顿！
+const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
   
@@ -141,9 +141,10 @@ const TaskNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-12px', top: '50%', transform: 'translateY(-50%)' }} />
     </div>
   );
-};
+});
 
-const TextNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
+// 🌟 性能优化：React.memo
+const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
     const handleBlur = () => { if (text !== data.label) data.onSave(data.id, text); };
     const rows = Math.max(1, text.split('\n').length);
@@ -160,7 +161,7 @@ const TextNode = ({ data, isConnectable }: { data: any, isConnectable: boolean }
             <Handle type="source" position={Position.Bottom} isConnectable={isConnectable} className="custom-handle" style={{ bottom: '-12px', left: '50%', transform: 'translateX(-50%)' }} />
         </div>
     );
-};
+});
 
 const nodeTypes = { task: TaskNode, text: TextNode };
 
@@ -364,11 +365,38 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   };
 
-  const onConnect = React.useCallback((params: Connection) => { connectionMadeRef.current = true; setEdges((eds) => { const newEdges = addEdge({ ...params, animated: true }, eds); plugin.saveBoardData(activeBoardId, { edges: newEdges }); return newEdges; }); }, [plugin, activeBoardId, setEdges]);
+  // 🌟 核心升级：连线时自动注入 Block ID，保证连接物理锁定不丢失！
+  const onConnect = React.useCallback(async (params: Connection) => { 
+      connectionMadeRef.current = true; 
+      
+      if (!params.source || !params.target) return;
+      // 瞬间为源节点和目标节点注入 Block ID（如果它们还没有的话），并返回最终绝对稳定的 ID
+      const newSourceId = await plugin.ensureBlockId(activeBoardId, params.source);
+      const newTargetId = await plugin.ensureBlockId(activeBoardId, params.target);
+
+      const newEdge = { 
+          id: `e${newSourceId}-${newTargetId}`, 
+          source: newSourceId, 
+          target: newTargetId, 
+          animated: true 
+      };
+
+      setEdges((eds) => addEdge(newEdge, eds)); 
+      
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (board) { 
+          board.data.edges.push(newEdge);
+          await plugin.saveSettings(); 
+      }
+      
+      // 触发视图刷新，确保节点使用全新的 Block ID 重新渲染
+      setRefreshKey(prev => prev + 1);
+  }, [plugin, activeBoardId, setEdges]);
+
   const onNodeDragStop = React.useCallback((event: any, node: Node) => { setNodes((nds) => nds.map(n => n.id === node.id ? node : n)); const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(!board) return; if (node.type === 'task') { const layout = { ...board.data.layout, [node.id]: node.position }; plugin.saveBoardData(activeBoardId, { layout }); } else if (node.type === 'text') { const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); plugin.saveBoardData(activeBoardId, { textNodes }); } }, [plugin, activeBoardId, setNodes]);
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
   const handleEditTask = (taskData: any) => { setEditTarget({ id: taskData.id, text: taskData.label, path: taskData.path, line: taskData.line }); };
-  const saveTaskEdit = async (text: string) => { if (!editTarget) return; await plugin.updateTaskContent(editTarget.path, editTarget.line, text); setEditTarget(null); }; // 这里去掉了强制刷新，依赖文件监听器
+  const saveTaskEdit = async (text: string) => { if (!editTarget) return; await plugin.updateTaskContent(editTarget.path, editTarget.line, text); setEditTarget(null); };
 
   const onPaneContextMenu = React.useCallback((event: React.MouseEvent) => {
       event.preventDefault(); const menu = new Menu();
@@ -402,18 +430,38 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 全新长路径拓扑算法，完美解决复杂网络挤成一列的问题
+  // 🌟 孤岛任务沉底算法升级：把无连线且已完成的任务扫到最下方紧凑排列，不再干扰视线
   const handleAutoLayout = async () => {
       const adjacency: Record<string, string[]> = {}; 
       const parents: Record<string, string[]> = {}; 
-      nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; });
-      edges.forEach(e => { if (adjacency[e.source]) adjacency[e.source].push(e.target); if (parents[e.target]) parents[e.target].push(e.source); });
+      const inDegree: Record<string, number> = {}; 
 
-      const mainNodes = nodes.filter(n => n.type === 'task').map(n => n.id);
+      nodes.forEach(n => { adjacency[n.id] = []; parents[n.id] = []; inDegree[n.id] = 0; });
+      edges.forEach(e => { 
+          if (adjacency[e.source]) adjacency[e.source].push(e.target); 
+          if (parents[e.target]) parents[e.target].push(e.source); 
+          if (inDegree[e.target] !== undefined) inDegree[e.target]++;
+      });
+
+      const mainNodes: string[] = []; 
+      const orphanFinishedNodes: string[] = [];
+
+      nodes.forEach(n => { 
+          if (n.type !== 'task') return; 
+          const isFinished = n.data.status === 'x' || n.data.customStatus === 'finished'; 
+          const isOrphan = inDegree[n.id] === 0 && adjacency[n.id].length === 0; 
+          
+          if (isFinished && isOrphan) { 
+              orphanFinishedNodes.push(n.id); // 确认为孤岛完成节点
+          } else { 
+              mainNodes.push(n.id); 
+          } 
+      });
+
       const layout: Record<string, {x: number, y: number}> = {}; 
       const COL_WIDTH = 400; const ROW_HEIGHT = 280;
 
-      // 1. 计算层级 (基于最长路径的拓扑排序)
+      // 1. Main Nodes 算法...
       const levels: Record<string, number> = {};
       mainNodes.forEach(id => levels[id] = 0);
       let changed = true; let iter = 0;
@@ -421,7 +469,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           changed = false;
           edges.forEach(e => {
               if (levels[e.source] !== undefined && levels[e.target] !== undefined) {
-                  if (levels[e.target] <= levels[e.source]) { // 如果目标层级不够深，强制推后
+                  if (levels[e.target] <= levels[e.source]) { 
                       levels[e.target] = levels[e.source] + 1;
                       changed = true;
                   }
@@ -430,7 +478,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           iter++;
       }
 
-      // 2. 按层级分组
       const levelGroups: Record<number, string[]> = {};
       let maxLevel = 0;
       mainNodes.forEach(id => {
@@ -440,7 +487,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           levelGroups[lvl].push(id);
       });
 
-      // 3. 计算Y轴坐标 (引入父节点平均值 + 碰撞检测)
       for (let lvl = 0; lvl <= maxLevel; lvl++) {
           const currentNodes = levelGroups[lvl] || [];
           const nodeWithY = currentNodes.map(nodeId => {
@@ -449,19 +495,30 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               nodeParents.forEach(p => { if (layout[p]) { avgY += layout[p].y; count++; } });
               return { id: nodeId, desiredY: count > 0 ? avgY / count : 0 };
           });
-          // 按期望Y坐标排序，减少交叉
           nodeWithY.sort((a, b) => a.desiredY - b.desiredY);
           
           let currentY = 0;
           nodeWithY.forEach(item => {
-              // 确保不会向上重叠
               let y = Math.max(currentY, item.desiredY);
               layout[item.id] = { x: lvl * COL_WIDTH, y: y };
               currentY = y + ROW_HEIGHT;
           });
       }
 
-      // 更新 ReactFlow 状态
+      // 2. 🌟 孤岛节点沉底逻辑：在下方更紧凑地矩阵排列
+      let maxY = 0; 
+      Object.values(layout).forEach(pos => { if(pos.y > maxY) maxY = pos.y; }); 
+      
+      const START_Y_FOR_FINISHED = maxY + ROW_HEIGHT * 1.5; // 空出明显间隔
+      const ORPHAN_COL_COUNT = 4; // 每行放4个
+      
+      orphanFinishedNodes.forEach((id, idx) => { 
+          const row = Math.floor(idx / ORPHAN_COL_COUNT); 
+          const col = idx % ORPHAN_COL_COUNT; 
+          // 垂直间距减半（140px），因为它们不需要连线空间
+          layout[id] = { x: col * COL_WIDTH, y: START_Y_FOR_FINISHED + (row * (ROW_HEIGHT * 0.5)) }; 
+      });
+
       setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] || n.position }))); 
       
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
@@ -490,7 +547,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         defaultEdgeOptions={{ type: 'smoothstep', style: { strokeWidth: 2, stroke: 'var(--interactive-accent)' } }}
         fitView minZoom={0.1} maxZoom={4}
         nodesDraggable={true} nodesConnectable={true} elementsSelectable={true}
-        // 🌟 开启物理网格吸附，间距 24px，方便手动对齐
         snapToGrid={true} snapGrid={[24, 24]}
         proOptions={{ hideAttribution: true }}
         panOnScroll={true} zoomOnScroll={true} preventScrolling={false}

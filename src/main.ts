@@ -27,11 +27,7 @@ export default class TaskGraphPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_TASK_GRAPH, (leaf) => new TaskGraphView(leaf, this));
 		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
 		this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
-		
-        // 🌟 移除空的设置界面，保持插件轻量
-		// this.addSettingTab(new TaskGraphSettingTab(this.app, this));
 
-        // 监听文件变化，自动刷新视图
 		this.registerEvent(
 			this.app.metadataCache.on('changed', () => {
 				if (this.viewRefresh) this.viewRefresh();
@@ -69,27 +65,23 @@ export default class TaskGraphPlugin extends Plugin {
 				if (filters.tags.length > 0 && !filters.tags.some(tag => lineText.includes(tag))) continue;
 				if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => lineText.includes(tag))) continue;
 
-                // 🌟 核心升级：双轨制稳定 ID 系统
                 let stableId = "";
-                // 1. 优先寻找 Obsidian 原生 Block ID (如 ^1a2b3c)
+                // 1. 优先寻找 Obsidian 原生 Block ID
                 const blockIdMatch = lineText.match(/\s\^([a-zA-Z0-9\-]+)$/);
                 
                 if (blockIdMatch) {
-                    // 如果存在块 ID，这是最绝对稳定的，随便你怎么改文字都不会变
-                    stableId = `${file.path}::${blockIdMatch[1]}`;
+                    stableId = `${file.path}::^${blockIdMatch[1]}`; // 显式标记 ^
                 } else {
-                    // 2. 兜底逻辑：纯文本哈希 (过滤掉日期、标签等易变元素)
+                    // 2. 兜底逻辑：纯文本哈希
                     const baseText = lineText.replace(/- \[[x\s\/bc!-]\]\s/, '').trim();
                     const cleanText = baseText.replace(/ ✅ \d{4}-\d{2}-\d{2}/, '').trim();
                     const textHash = cleanText.substring(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
-                    stableId = `${file.path}::${textHash}`;
+                    stableId = `${file.path}::#${textHash}`; // 显式标记 #
                     
-                    // 处理完全重复的文本
                     let counter = 0;
-                    while(tasks.some(t => t.id === stableId)) { counter++; stableId = `${file.path}::${textHash}_${counter}`; }
+                    while(tasks.some(t => t.id === stableId)) { counter++; stableId = `${file.path}::#${textHash}_${counter}`; }
                 }
 
-                // 提取展示用的纯文本（去除结尾的 Block ID，让图谱里看起来干净）
                 const displayText = lineText.replace(/- \[[x\s\/bc!-]\]\s/, '').replace(/\s\^([a-zA-Z0-9\-]+)$/, '').trim();
 
 				tasks.push({
@@ -106,6 +98,57 @@ export default class TaskGraphPlugin extends Plugin {
 		return tasks;
 	}
 
+    // 🌟 核心新方法：确保节点具有绝对稳定的 Block ID。如果没有，则自动注入并迁移所有相关数据。
+    async ensureBlockId(boardId: string, nodeId: string): Promise<string> {
+        if (nodeId.includes('::^')) return nodeId; // 已经拥有稳定的 Block ID，直接跳过
+
+        const tasks = await this.getTasks(boardId);
+        const task = tasks.find(t => t.id === nodeId);
+        if (!task) return nodeId; // 如果找不到任务（异常情况），原样返回
+
+        // 生成 6 位随机块 ID
+        const randomBlockId = Math.random().toString(36).substring(2, 8);
+        const newId = `${task.path}::^${randomBlockId}`;
+
+        // 1. 修改文件，注入块 ID
+        const file = this.app.vault.getAbstractFileByPath(task.path);
+        if (file instanceof TFile) {
+            const content = await this.app.vault.read(file);
+            const lines = content.split('\n');
+            if (lines[task.line] !== undefined) {
+                if (!lines[task.line].match(/\s\^([a-zA-Z0-9\-]+)$/)) {
+                    lines[task.line] = lines[task.line].trimEnd() + ` ^${randomBlockId}`;
+                    await this.app.vault.modify(file, lines.join('\n'));
+                }
+            }
+        }
+
+        // 2. 无缝迁移配置文件中的坐标、状态和连线数据
+        const boardIndex = this.settings.boards.findIndex(b => b.id === boardId);
+        if (boardIndex > -1) {
+            const board = this.settings.boards[boardIndex];
+            
+            // 迁移连线
+            board.data.edges.forEach((e: any) => {
+                if (e.source === nodeId) e.source = newId;
+                if (e.target === nodeId) e.target = newId;
+            });
+            // 迁移坐标
+            if (board.data.layout[nodeId]) {
+                board.data.layout[newId] = board.data.layout[nodeId];
+                delete board.data.layout[nodeId];
+            }
+            // 迁移自定义状态
+            if (board.data.nodeStatus[nodeId]) {
+                board.data.nodeStatus[newId] = board.data.nodeStatus[nodeId];
+                delete board.data.nodeStatus[nodeId];
+            }
+            await this.saveSettings();
+        }
+
+        return newId;
+    }
+
 	async updateTaskContent(filePath: string, lineNumber: number, newText: string) {
 		const file = this.app.vault.getAbstractFileByPath(filePath);
 		if (!(file instanceof TFile)) return;
@@ -115,17 +158,12 @@ export default class TaskGraphPlugin extends Plugin {
 			if (lineNumber >= lines.length) return;
 			const originalLine = lines[lineNumber];
             
-            // 🌟 保护机制：如果原行有块 ID，在更新文本时保留它
             const blockIdMatch = originalLine.match(/(\s\^[a-zA-Z0-9\-]+)$/);
             const blockIdStr = blockIdMatch ? blockIdMatch[1] : '';
 
 			const match = originalLine.match(/^(\s*- \[[x\s\/bc!-]\]\s)/);
-			if (match) {
-                // 将 checkbox、新文本、原有的块ID拼回去
-                lines[lineNumber] = match[1] + newText + blockIdStr;
-            } else {
-                lines[lineNumber] = newText + blockIdStr;
-            }
+			if (match) { lines[lineNumber] = match[1] + newText + blockIdStr; } 
+            else { lines[lineNumber] = newText + blockIdStr; }
 			await this.app.vault.modify(file, lines.join('\n'));
 		} catch (e) { console.error(e); }
 	}
@@ -137,13 +175,11 @@ export default class TaskGraphPlugin extends Plugin {
 			const content = await this.app.vault.read(file);
 			const prefix = content.endsWith('\n') ? '' : '\n';
             
-            // 🌟 自动注入机制：插件创建的任务，天生带有随机块 ID
-            const randomBlockId = Math.random().toString(36).substring(2, 8); // 生成类似 1a2b3c 的 6 位标识符
+            const randomBlockId = Math.random().toString(36).substring(2, 8);
 			const newTaskLine = `- [ ] ${taskText} ^${randomBlockId}`;
 			await this.app.vault.append(file, `${prefix}${newTaskLine}`);
             
-            // 直接返回带块 ID 的绝对稳定标识
-            return `${filePath}::${randomBlockId}`;
+            return `${filePath}::^${randomBlockId}`;
 		} catch (e) { return null; }
 	}
 
