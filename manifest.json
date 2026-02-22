@@ -6,5 +6,5 @@
 	"description": "Visualize your Obsidian tasks on an infinite canvas. Features auto-layout, mind-map style connections, Apple-style UI, and two-way sync with markdown files.",
 	"author": "TriumphC",
 	"authorUrl": "https://github.com/CccJhuan",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }
