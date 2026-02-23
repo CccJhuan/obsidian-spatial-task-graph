@@ -437,7 +437,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 🌟 终极排版引擎：逆向重心推演 + 物理碰撞检测，杜绝无限膨胀与父节点飘逸
+  // 🌟 幂等布局引擎：父子中心对齐 + 保留用户排序 + 防重叠
   const handleAutoLayout = async () => {
       // --- 1. 构建图结构 ---
       const undirectedAdj: Record<string, string[]> = {};
@@ -503,12 +503,26 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
       const layout: Record<string, { x: number; y: number }> = {};
       const COL_WIDTH = 320;
-      const ROW_GAP = 130;
       const COMPONENT_GAP = 60;
       const NODE_HEIGHT = 100;
 
-      // --- 4. 记录用户排序（仅用于确定同层节点的相对顺序） ---
-      // 🌟 关键：只提取排序信息，不使用绝对坐标值，保证幂等性
+      // --- 4. 🌟 动态计算行间距：基于节点实际高度 ---
+      // 测量每个节点的 DOM 高度，取最大值作为基准
+      const measuredHeights: number[] = [];
+      nodes.forEach(n => {
+          const el = document.querySelector(`[data-id="${n.id}"]`);
+          if (el) {
+              const rect = el.getBoundingClientRect();
+              measuredHeights.push(rect.height);
+          }
+      });
+      const maxNodeHeight = measuredHeights.length > 0
+          ? Math.max(...measuredHeights)
+          : 80; // 默认估计高度
+      // 行间距 = 最大节点高度 + 固定间隙（至少 160px）
+      const ROW_GAP = Math.max(160, maxNodeHeight + 40);
+
+      // --- 5. 记录用户排序（仅取顺序，不取绝对值） ---
       const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
       const getUserOrderRank = (ids: string[]): string[] => {
@@ -519,11 +533,11 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           });
       };
 
-      // --- 5. 为每个连通分量做层级布局 ---
+      // --- 6. 为每个连通分量做层级布局 ---
       const componentResults: { comp: string[]; height: number }[] = [];
 
       components.forEach(comp => {
-          // 5a. 计算层级
+          // 6a. 计算层级
           const level: Record<string, number> = {};
           comp.forEach(id => { level[id] = 0; });
 
@@ -542,7 +556,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               });
           }
 
-          // 5b. 按层级分组
+          // 6b. 按层级分组
           const levelGroups: Record<number, string[]> = {};
           let maxLevel = 0;
           comp.forEach(id => {
@@ -552,41 +566,69 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               levelGroups[lvl]!.push(id);
           });
 
-          // 5c. 🌟 同层节点按用户Y排序（只取顺序，不取绝对值）
+          // 6c. 同层节点按用户Y排序
           for (const lvl of Object.keys(levelGroups)) {
               levelGroups[Number(lvl)] = getUserOrderRank(levelGroups[Number(lvl)]!);
           }
 
-          // 5d. 🌟 纯函数式布局：自底向上分配槽位，完全不依赖当前坐标
-          //     每个节点在同层中占据一个"槽位(slot)"，slot 从 0 开始
-          //     父节点的 slot = 子节点 slot 的中心值
-          //     最终 Y = slot * ROW_GAP
+          // 6d. 🌟 子树 slot 分配（纯函数式，完全幂等）
+          const slotY: Record<string, number> = {};
+          const assignedNodes = new Set<string>();
 
-          // 先计算每个节点的子树叶子数量（用于分配槽位宽度）
-          const subtreeSize: Record<string, number> = {};
+          // 计算每个节点在本分量内的直接子节点
+          const compChildren = (id: string): string[] => {
+              return (directedAdj[id] || []).filter(cid => comp.includes(cid));
+          };
 
-          const getSubtreeSize = (id: string): number => {
-              if (subtreeSize[id] !== undefined) return subtreeSize[id]!;
-              const children = (directedAdj[id] || []).filter(cid => level[cid] !== undefined && comp.includes(cid));
+          // 递归分配 slot 区间：节点 id 从 startSlot 开始，返回占用的 slot 数
+          const assignSlots = (id: string, startSlot: number): number => {
+              if (assignedNodes.has(id)) {
+                  // 已经被其他父节点分配过（多父节点/菱形），不再重复分配
+                  return 0;
+              }
+              assignedNodes.add(id);
+
+              const children = compChildren(id);
+              // 过滤掉已被分配的子节点（共享子节点情况）
+              const unassignedChildren = children.filter(cid => !assignedNodes.has(cid));
+              const assignedChildren = children.filter(cid => assignedNodes.has(cid));
+
               if (children.length === 0) {
-                  subtreeSize[id] = 1;
+                  // 叶子节点
+                  slotY[id] = startSlot;
                   return 1;
               }
-              let total = 0;
-              children.forEach(cid => { total += getSubtreeSize(cid); });
-              subtreeSize[id] = total;
-              return total;
+
+              // 子节点按用户排序
+              const sortedUnassigned = getUserOrderRank(unassignedChildren);
+
+              // 递归分配未被分配的子节点
+              let currentSlot = startSlot;
+              let totalUsed = 0;
+              sortedUnassigned.forEach(childId => {
+                  const used = assignSlots(childId, currentSlot);
+                  currentSlot += used;
+                  totalUsed += used;
+              });
+
+              // 父节点 slot = 所有子节点（含已分配的）的 slot 中心
+              const allChildSlots = children
+                  .map(cid => slotY[cid])
+                  .filter((s): s is number => s !== undefined);
+
+              if (allChildSlots.length > 0) {
+                  const minSlot = Math.min(...allChildSlots);
+                  const maxSlot = Math.max(...allChildSlots);
+                  slotY[id] = (minSlot + maxSlot) / 2;
+              } else {
+                  slotY[id] = startSlot;
+                  totalUsed = Math.max(totalUsed, 1);
+              }
+
+              return Math.max(totalUsed, 1);
           };
-          comp.forEach(id => getSubtreeSize(id));
 
-          // 5e. 🌟 自底向上分配 slot：叶子节点紧凑排列，父节点居中
-          const slotY: Record<string, number> = {};
-
-          // 处理最深层（叶子节点按顺序分配）
-          // 但叶子可能分布在不同层级，所以我们从最深层开始逐层处理
-
-          // 方法：为每个根节点的子树递归分配连续的 slot 区间
-          // 根节点 = 入度为 0 的节点（在本分量内）
+          // 找根节点（本分量内入度为0）
           const compInDegree: Record<string, number> = {};
           comp.forEach(id => { compInDegree[id] = 0; });
           edges.forEach(e => {
@@ -596,39 +638,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           });
 
           const roots = comp.filter(id => (compInDegree[id] ?? 0) === 0);
-          // 按用户顺序排列根节点
           const sortedRoots = getUserOrderRank(roots);
-
-          // 递归分配：给节点 id 分配从 startSlot 开始的区间，返回使用的 slot 数
-          const assignSlots = (id: string, startSlot: number): number => {
-              const children = (directedAdj[id] || [])
-                  .filter(cid => comp.includes(cid));
-
-              if (children.length === 0) {
-                  // 叶子：占一个 slot
-                  slotY[id] = startSlot;
-                  return 1;
-              }
-
-              // 🌟 子节点按用户Y排序
-              const sortedChildren = getUserOrderRank(children);
-
-              // 递归分配子节点
-              let currentSlot = startSlot;
-              let totalUsed = 0;
-              sortedChildren.forEach(childId => {
-                  const used = assignSlots(childId, currentSlot);
-                  currentSlot += used;
-                  totalUsed += used;
-              });
-
-              // 父节点居中：slot = 子节点区间的中心
-              const firstChildSlot = slotY[sortedChildren[0]!] ?? startSlot;
-              const lastChildSlot = slotY[sortedChildren[sortedChildren.length - 1]!] ?? startSlot;
-              slotY[id] = (firstChildSlot + lastChildSlot) / 2;
-
-              return totalUsed;
-          };
 
           let globalSlot = 0;
           sortedRoots.forEach(rootId => {
@@ -636,7 +646,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               globalSlot += used;
           });
 
-          // 处理可能没被分配到的节点（如环中的节点）
+          // 处理未被分配到的节点（环或孤立在分量中的）
           comp.forEach(id => {
               if (slotY[id] === undefined) {
                   slotY[id] = globalSlot;
@@ -644,7 +654,22 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               }
           });
 
-          // 5f. 转换 slot → 实际坐标
+          // 6e. 🌟 防重叠后处理：同层节点按 slot 排序后强制最小间距
+          for (let lvl = 0; lvl <= maxLevel; lvl++) {
+              const group = levelGroups[lvl] || [];
+              // 按已分配的 slot 排序
+              const sorted = [...group].sort((a, b) => (slotY[a] ?? 0) - (slotY[b] ?? 0));
+              for (let i = 1; i < sorted.length; i++) {
+                  const prevSlot = slotY[sorted[i - 1]!] ?? 0;
+                  const currSlot = slotY[sorted[i]!] ?? 0;
+                  if (currSlot < prevSlot + 1) {
+                      // 推开重叠的节点
+                      slotY[sorted[i]!] = prevSlot + 1;
+                  }
+              }
+          }
+
+          // 6f. slot → 坐标
           const compLayout: Record<string, { x: number; y: number }> = {};
           comp.forEach(id => {
               compLayout[id] = {
@@ -653,7 +678,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
               };
           });
 
-          // 归一化：最小 Y = 0
+          // 归一化
           const allYs = Object.values(compLayout).map(p => p.y);
           const minY = Math.min(...allYs);
           const maxY = Math.max(...allYs);
@@ -666,7 +691,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           componentResults.push({ comp, height: maxY - minY });
       });
 
-      // --- 6. 分量堆叠：按大小降序，从 Y=0 紧凑排列 ---
+      // --- 7. 分量堆叠 ---
       componentResults.sort((a, b) => b.comp.length - a.comp.length);
 
       let globalY = 0;
@@ -679,7 +704,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           globalY += cr.height + NODE_HEIGHT + COMPONENT_GAP;
       });
 
-      // --- 7. 孤立活跃节点 ---
+      // --- 8. 孤立活跃节点 ---
       if (isolatedActiveIds.length > 0) {
           const sorted = getUserOrderRank(isolatedActiveIds);
           const COLS = 3;
@@ -693,7 +718,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           globalY = startY + (maxRow + 1) * ROW_GAP + COMPONENT_GAP;
       }
 
-      // --- 8. 孤立已完成节点 ---
+      // --- 9. 孤立已完成节点 ---
       if (isolatedFinishedIds.length > 0) {
           const COLS = 4;
           const COMPACT_GAP = ROW_GAP * 0.75;
@@ -705,7 +730,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           });
       }
 
-      // --- 9. 应用布局 ---
+      // --- 10. 应用布局（不改变视口） ---
       setNodes(nds => nds.map(n => ({ ...n, position: layout[n.id] ?? n.position })));
 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
@@ -734,10 +759,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
           await plugin.saveBoardData(activeBoardId, { layout: mergedLayout, textNodes: updatedTextNodes });
       }
-
-      setTimeout(() => {
-          reactFlowInstance.fitView({ padding: 0.15, duration: 300 });
-      }, 50);
 
       new Notice("Smart layout applied!");
   };
