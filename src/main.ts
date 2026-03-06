@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, TFile, debounce } from 'obsidian';
+import { Plugin, WorkspaceLeaf, TFile, debounce, Notice } from 'obsidian';
 import { TaskGraphView, VIEW_TYPE_TASK_GRAPH } from './TaskGraphView';
 import { TaskGraphSettingTab } from './settings';
 
@@ -7,7 +7,7 @@ export interface TextNodeData { id: string; text: string; x: number; y: number; 
 export interface GraphBoard {
 	id: string; name: string;
 	filters: { tags: string[]; excludeTags: string[]; folders: string[]; status: string[]; };
-	data: { layout: Record<string, { x: number, y: number }>; edges: any[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; }
+	data: { layout: Record<string, { x: number, y: number }>; edges: any[]; nodeStatus: Record<string, string>; textNodes: TextNodeData[]; viewport?: { x: number; y: number; zoom: number }; }
 }
 
 interface TaskGraphSettings { boards: GraphBoard[]; lastActiveBoardId: string; }
@@ -23,7 +23,6 @@ export default class TaskGraphPlugin extends Plugin {
 	settings: TaskGraphSettings;
 	viewRefresh?: () => void;
     
-    // 增量缓存核心
     taskCache: Map<string, any[]> = new Map();
     isCacheInitialized: boolean = false;
 
@@ -34,14 +33,37 @@ export default class TaskGraphPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
         
-        // 注册设置面板
         this.addSettingTab(new TaskGraphSettingTab(this.app, this));
 
 		this.registerView(VIEW_TYPE_TASK_GRAPH, (leaf) => new TaskGraphView(leaf, this));
 		this.addRibbonIcon('network', 'Open Task Graph', () => { this.activateView(); });
-		this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
+		
+        // 注册打开视图的命令
+        this.addCommand({ id: 'open-task-graph', name: 'Open Task Graph', callback: () => { this.activateView(); } });
 
-        // 精细化监听文件变动，抛弃全量盲目刷新
+        // 【全新升级】：注册全局自动排版快捷键入口
+        this.addCommand({ 
+            id: 'layout-task-graph', 
+            name: 'Auto-layout Task Graph (Smart Arrange)', 
+            callback: () => { 
+                const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TASK_GRAPH);
+                if (leaves.length > 0) {
+                    // 【核心修复】：将索引访问提取为变量，并进行显式真值校验，完美消除 TS 严格模式报错
+                    const firstLeaf = leaves[0];
+                    if (firstLeaf) {
+                        const view = firstLeaf.view as TaskGraphView;
+                        if (view.triggerLayout) {
+                            view.triggerLayout();
+                        } else {
+                            new Notice("Layout engine is still loading...");
+                        }
+                    }
+                } else {
+                    new Notice("Task Graph is not open.");
+                }
+            } 
+        });
+
 		this.registerEvent(this.app.metadataCache.on('changed', (file) => {
             void this.updateFileCache(file);
         }));
@@ -60,13 +82,11 @@ export default class TaskGraphPlugin extends Plugin {
             }
         }));
         
-        // 插件加载后，后台异步初始化缓存，不阻塞 UI
         this.app.workspace.onLayoutReady(() => {
             void this.initializeCache();
         });
 	}
 
-    // 初始化全量扫描（仅执行一次）
     async initializeCache() {
         const files = this.app.vault.getMarkdownFiles();
         for (const file of files) {
@@ -76,12 +96,10 @@ export default class TaskGraphPlugin extends Plugin {
         this.debouncedRefresh();
     }
 
-    // 单文件级别的局部更新（时间复杂度 O(1)）
     async updateFileCache(file: import('obsidian').TAbstractFile, triggerRefresh = true) {
         if (!(file instanceof TFile) || file.extension !== 'md') return;
         
         const cache = this.app.metadataCache.getFileCache(file);
-        // 如果文件里压根没有列表/任务，直接清空缓存并退出，极大节省算力
         if (!cache || !cache.listItems) {
             if (this.taskCache.has(file.path)) {
                 this.taskCache.delete(file.path);
@@ -212,19 +230,14 @@ export default class TaskGraphPlugin extends Plugin {
 			const originalLine = lines[lineNumber];
             if (originalLine === undefined) return; 
 
-            // 利用高阶正则安全提取“前缀(包含状态)”和“原有块 ID”
             const lineRegex = /^(\s*- \[[x\s\/bc!-]\]\s)?(.*?)(?:\s+(\^[a-zA-Z0-9\-]+))?$/;
             const originalMatch = originalLine.match(lineRegex);
 
-            // 提取前缀，如果没有匹配到（极端情况），回退到默认未完成状态
             const prefix = originalMatch && originalMatch[1] ? originalMatch[1] : '- [ ] ';
             const existingBlockId = originalMatch && originalMatch[3] ? originalMatch[3] : '';
 
-            // 清洗用户输入的新文本
-            // 风险规避：强制剥离用户可能不小心粘贴进来的其他块 ID，并清除首尾不可见字符
             const cleanNewText = newText.replace(/(?:\s+\^[a-zA-Z0-9\-]+)+$/, '').trim();
 
-            // 无损缝合
             const finalBlockIdStr = existingBlockId ? ` ${existingBlockId}` : '';
             lines[lineNumber] = `${prefix}${cleanNewText}${finalBlockIdStr}`;
 
@@ -241,12 +254,9 @@ export default class TaskGraphPlugin extends Plugin {
 			const content = await this.app.vault.read(file);
 			const prefix = content.endsWith('\n') ? '' : '\n';
             
-            // 清洗输入文本：防止拖拽/新建时带入冗余的空格或破坏性 ID
             const cleanText = taskText.replace(/(?:\s+\^[a-zA-Z0-9\-]+)+$/, '').trim();
-            
             const randomBlockId = Math.random().toString(36).substring(2, 8);
 			
-            // 严格的单空格拼接规范
             const newTaskLine = `- [ ] ${cleanText} ^${randomBlockId}`;
 			
             await this.app.vault.append(file, `${prefix}${newTaskLine}`);
@@ -268,6 +278,7 @@ export default class TaskGraphPlugin extends Plugin {
 		if (data.edges) currentData.edges = data.edges;
 		if (data.nodeStatus) currentData.nodeStatus = data.nodeStatus;
 		if (data.textNodes) currentData.textNodes = data.textNodes;
+        if (data.viewport) currentData.viewport = data.viewport;
 		await this.saveSettings();
 	}
 
@@ -278,9 +289,7 @@ export default class TaskGraphPlugin extends Plugin {
 		await this.saveSettings();
 	}
 
-    // 已经转换为纯同步的增量消费者方法，去除 async 彻底解决 lint 报错
 	getTasks(boardId: string) {
-        // 防御性拦截：如果初始化还没完成，直接返回空，避免报错
         if (!this.isCacheInitialized) return [];
 
 		const board = this.settings.boards.find(b => b.id === boardId) || this.settings.boards[0];
@@ -288,7 +297,6 @@ export default class TaskGraphPlugin extends Plugin {
 
 		const filters = board.filters;
         
-        // 收集所有有连线的节点 ID
 		const connectedTaskIds = new Set<string>();
 		board.data.edges.forEach((e: any) => {
 			connectedTaskIds.add(e.source);
@@ -297,10 +305,8 @@ export default class TaskGraphPlugin extends Plugin {
 
         const allTasks: any[] = [];
 
-        // 核心大换血：不再访问 getMarkdownFiles()，直接遍历内存 Map 实现 O(1) 量级提取
         for (const [path, fileTasks] of this.taskCache.entries()) {
             
-            // 目录过滤极速剪枝
             if (filters.folders.length > 0 && !filters.folders.some(folder => path.startsWith(folder))) {
                 continue;
             }
@@ -309,7 +315,16 @@ export default class TaskGraphPlugin extends Plugin {
                 const isConnected = connectedTaskIds.has(t.id);
                 
                 if (!isConnected && filters.status.length > 0 && !filters.status.includes(t.status)) continue;
-                if (filters.tags.length > 0 && !filters.tags.some(tag => t.rawText.includes(tag))) continue;
+                
+                if (filters.tags.length > 0) {
+                    const tagMode = (filters as any).tagMode || 'OR';
+                    if (tagMode === 'OR') {
+                        if (!filters.tags.some(tag => t.rawText.includes(tag))) continue;
+                    } else {
+                        if (!filters.tags.every(tag => t.rawText.includes(tag))) continue;
+                    }
+                }
+
                 if (filters.excludeTags.length > 0 && filters.excludeTags.some(tag => t.rawText.includes(tag))) continue;
 
                 allTasks.push(t);

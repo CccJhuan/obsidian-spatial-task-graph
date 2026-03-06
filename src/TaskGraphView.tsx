@@ -15,17 +15,30 @@ import ReactFlow, {
   ReactFlowProvider,
   useReactFlow,
   SelectionMode,
-  ConnectionLineType
+  ConnectionLineType,
+  Viewport
 } from 'reactflow';
 
 import TaskGraphPlugin, { GraphBoard } from './main';
 
 export const VIEW_TYPE_TASK_GRAPH = 'task-graph-view';
 
+interface TaskNodeData {
+    id: string; label: string; status: string; file: string; path: string; line: number; customStatus: string;
+    onEdit: (data: TaskNodeData) => void;
+    onToggleStatus: (id: string, status: string, path: string, line: number) => Promise<void>;
+    onOpenFile: (path: string) => void;
+}
+
+interface TextNodeData {
+    id: string; label: string;
+    onSave: (id: string, text: string) => Promise<void>;
+}
+
 const STATUS_COLORS = { 'in_progress': '#34c759', 'pending': '#ff9500', 'finished': '#af52de', 'blocked': '#ff3b30', 'backlog': '#8e8e93', 'default': 'var(--text-muted)' };
 const extractTags = (text: string) => { if (!text) return { tags: [], cleanText: '' }; const tagRegex = /#[\w\u4e00-\u9fa5]+(\/[\w\u4e00-\u9fa5]+)*/g; const tags = text.match(tagRegex) || []; const cleanText = text.replace(tagRegex, '').trim(); return { tags, cleanText }; };
 
-const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
+const TaskNode = React.memo(({ data, isConnectable }: { data: TaskNodeData, isConnectable: boolean }) => {
   const { tags, cleanText } = extractTags(data.label);
   const statusColor = STATUS_COLORS[data.customStatus as keyof typeof STATUS_COLORS] || STATUS_COLORS['default'];
   
@@ -36,10 +49,9 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
       <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
             <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{data.customStatus === 'default' ? 'TASK' : data.customStatus.replace('_', ' ')}</span>
-            <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit Task">✎</div>
+            <div className="edit-btn" onClick={(e) => { e.stopPropagation(); data.onEdit(data); }} title="Edit task">✎</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-            {/* 修复 8: void 显式接管 Promise */}
             <div 
                 className="nodrag" 
                 onMouseDown={(e) => e.stopPropagation()} 
@@ -61,7 +73,7 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
           </div>
           <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: 1 }}>{tags.map((tag, i) => (<span key={i} className="node-tag">{tag}</span>))}</div>
-              <div className="open-file-btn" onClick={(e) => { e.stopPropagation(); data.onOpenFile(data.path); }} title="Open File">↗ <span>{data.file}</span></div>
+              <div className="open-file-btn" onClick={(e) => { e.stopPropagation(); data.onOpenFile(data.path); }} title="Open file">↗ <span>{data.file}</span></div>
           </div>
       </div>
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="custom-handle custom-handle-right" style={{ right: '-20px', width: '40px', height: '40px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -69,9 +81,9 @@ const TaskNode = React.memo(({ data, isConnectable }: { data: any, isConnectable
   );
 });
 
-const TextNode = React.memo(({ data, isConnectable }: { data: any, isConnectable: boolean }) => {
+const TextNode = React.memo(({ data, isConnectable }: { data: TextNodeData, isConnectable: boolean }) => {
     const [text, setText] = React.useState(data.label);
-    const handleBlur = () => { if (text !== data.label) void data.onSave(data.id, text); }; // 修复 8
+    const handleBlur = () => { if (text !== data.label) void data.onSave(data.id, text); }; 
     const rows = Math.max(1, text.split('\n').length);
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
 
@@ -97,29 +109,28 @@ const EditTaskModal = ({ initialText, onClose, onSave, allTags }: { initialText:
         const cursorPos = e.target.selectionStart; const textBeforeCursor = val.slice(0, cursorPos); const match = textBeforeCursor.match(/#([\w\u4e00-\u9fa5]*)$/);
         if (match) { const query = (match[1] || '').toLowerCase(); const filtered = allTags.filter(t => t.toLowerCase().includes(query)).slice(0, 10); if (filtered.length > 0) { setSuggestions(filtered); setSuggestionPos({ top: 140, left: 30 }); } else { setSuggestions([]); } } else { setSuggestions([]); }
     };
-    const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + '#' + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
+    const insertTag = (tag: string) => { const cursorPos = textareaRef.current?.selectionStart || text.length; const textBeforeCursor = text.slice(0, cursorPos); const textAfterCursor = text.slice(cursorPos); const lastHashIndex = textBeforeCursor.lastIndexOf('#'); const newText = textBeforeCursor.slice(0, lastHashIndex) + tag + ' ' + textAfterCursor; setText(newText); setSuggestions([]); textareaRef.current?.focus(); };
     const insertMetadata = (symbol: string) => { const newText = text + ` ${symbol} `; setText(newText); textareaRef.current?.focus(); };
     
-    // 修复 8: void wrapped Promise
     const handleKeyDown = (e: React.KeyboardEvent) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void onSave(text); } };
 
     return (
-        <div className="edit-overlay" onClick={onClose}>
+        <div className="edit-overlay">
             <div className="edit-modal" onClick={(e) => e.stopPropagation()}>
-                <h3 style={{ margin: 0, fontWeight: 600, color: 'var(--text-normal)' }}>Edit Task</h3>
+                <h3 style={{ margin: 0, fontWeight: 600, color: 'var(--text-normal)' }}>Edit task</h3>
                 <div style={{ position: 'relative' }}>
                     <textarea ref={textareaRef} value={text} onChange={handleInput} onKeyDown={handleKeyDown} onKeyUp={(e) => e.stopPropagation()} style={{ width: '100%', height: '120px', resize: 'vertical', padding: '12px', borderRadius: '8px', border: '1px solid var(--background-modifier-border)', fontSize: '14px', lineHeight: '1.5', background: 'var(--background-secondary)', color: 'var(--text-normal)' }} placeholder="Task description..." autoFocus />
-                    {suggestions.length > 0 && (<div className="suggestion-list" style={{ top: suggestionPos.top, left: suggestionPos.left }}>{suggestions.map(tag => (<div key={tag} className="suggestion-item" onClick={() => insertTag(tag)}><span style={{opacity:0.6}}>#</span> {tag}</div>))}</div>)}
+                    {suggestions.length > 0 && (<div className="suggestion-list" style={{ top: suggestionPos.top, left: suggestionPos.left }}>{suggestions.map(tag => (<div key={tag} className="suggestion-item" onClick={() => insertTag(tag)}>{tag}</div>))}</div>)}
                 </div>
                 <div className="metadata-toolbar">
-                    <div className="metadata-btn" onClick={() => insertMetadata('📅')} title="Due Date">📅 <span className="metadata-label">Due</span></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🛫')} title="Start Date">🛫 <span className="metadata-label">Start</span></div>
+                    <div className="metadata-btn" onClick={() => insertMetadata('📅')} title="Due date">📅 <span className="metadata-label">Due</span></div>
+                    <div className="metadata-btn" onClick={() => insertMetadata('🛫')} title="Start date">🛫 <span className="metadata-label">Start</span></div>
                     <div className="metadata-btn" onClick={() => insertMetadata('⏳')} title="Scheduled">⏳ <span className="metadata-label">Sched</span></div>
                     <div className="metadata-btn" onClick={() => insertMetadata('🔁')} title="Recurring">🔁 <span className="metadata-label">Recur</span></div>
                     <div style={{ width: 1, height: 16, background: 'var(--background-modifier-border)', margin: '0 4px' }}></div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🔺')} title="High Priority">🔺</div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🔼')} title="Medium Priority">🔼</div>
-                    <div className="metadata-btn" onClick={() => insertMetadata('🔽')} title="Low Priority">🔽</div>
+                    <div className="metadata-btn" onClick={() => insertMetadata('🔺')} title="High priority">🔺</div>
+                    <div className="metadata-btn" onClick={() => insertMetadata('🔼')} title="Medium priority">🔼</div>
+                    <div className="metadata-btn" onClick={() => insertMetadata('🔽')} title="Low priority">🔽</div>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: 'auto' }}><button onClick={onClose} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)' }}>Cancel</button><button onClick={() => { void onSave(text); }} style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', background: 'var(--interactive-accent)', color: 'white', fontWeight: 500 }}>Save</button></div>
             </div>
@@ -131,7 +142,7 @@ const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConf
     return (
         <div className="edit-overlay" onClick={onClose}>
             <div className="edit-modal" style={{ width: '320px', alignItems: 'center', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                <h3 style={{ margin: '0 0 10px 0', color: 'var(--text-normal)' }}>Confirm Action</h3>
+                <h3 style={{ margin: '0 0 10px 0', color: 'var(--text-normal)' }}>Confirm action</h3>
                 <p style={{ color: 'var(--text-muted)', marginBottom: '20px', fontSize: '14px' }}>{message}</p>
                 <div style={{ display: 'flex', gap: '12px', width: '100%', justifyContent: 'center' }}>
                     <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid var(--background-modifier-border)', background: 'transparent', color: 'var(--text-normal)', cursor: 'pointer' }}>Cancel</button>
@@ -151,7 +162,7 @@ const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: Node[], o
 
     const handleDragStart = (e: React.DragEvent, nodeId: string) => { e.dataTransfer.setData('nodeId', nodeId); e.dataTransfer.effectAllowed = 'move'; };
     const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
-    const handleDrop = (e: React.DragEvent, targetStatus: string) => { e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) void onStatusChange(nodeId, targetStatus); }; // 修复 8
+    const handleDrop = (e: React.DragEvent, targetStatus: string) => { e.preventDefault(); const nodeId = e.dataTransfer.getData('nodeId'); if (nodeId) void onStatusChange(nodeId, targetStatus); }; 
 
     const renderList = (title: string, items: Node[], color: string, className: string, statusKey: string) => (
         <div className="sidebar-section" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, statusKey)}>
@@ -164,23 +175,138 @@ const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: Node[], o
             </div>
         </div>
     );
-    return (<div className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)' }}>My Tasks</div>{renderList('In Progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
+    return (<div className="task-sidebar" onMouseDown={stopProp} onWheel={stopProp} onContextMenu={stopProp}><div style={{ marginBottom: '16px', fontSize: '16px', fontWeight: '800', letterSpacing: '-0.5px', color: 'var(--text-normal)' }}>My tasks</div>{renderList('In progress', inProgress, STATUS_COLORS['in_progress'], 'in-progress', 'in_progress')}{renderList('Pending', pending, STATUS_COLORS['pending'], 'pending', 'pending')}{renderList('Backlog', backlog, STATUS_COLORS['backlog'], 'backlog', 'backlog')}</div>);
 };
 
 const GraphToolbar = () => {
     const { zoomIn, zoomOut, fitView } = useReactFlow();
     const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
     const btnStyle: React.CSSProperties = { width: '32px', height: '32px', background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', marginBottom: '8px' };
-    return (<Panel position="top-right" style={{ margin: '10px', display: 'flex', flexDirection: 'column', pointerEvents: 'all' }} onMouseDown={stopPropagation}><button style={btnStyle} onClick={() => { zoomIn(); }} title="Zoom In"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => { zoomOut(); }} title="Zoom Out"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => { fitView({duration: 800}); }} title="Fit View"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></Panel>);
+    
+    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', display: 'flex', flexDirection: 'column', pointerEvents: 'all' }} onMouseDown={stopPropagation}><button style={btnStyle} onClick={() => { zoomIn(); }} title="Zoom in"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={btnStyle} onClick={() => { zoomOut(); }} title="Zoom out"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button><button style={{...btnStyle, marginBottom: 0}} onClick={() => { fitView({duration: 800}); }} title="Fit view"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></Panel>);
 };
 
-const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onResetView, currentBoard, onUpdateFilter, onRequestConfirm }: any) => {
+interface ControlPanelProps {
+    boards: GraphBoard[];
+    activeBoardId: string;
+    onSwitchBoard: (id: string) => void;
+    onAddBoard: () => void;
+    onRenameBoard: (name: string) => Promise<void>;
+    onDeleteBoard: (id: string) => Promise<void>;
+    onAutoLayout: () => Promise<void>;
+    onResetView: () => void;
+    currentBoard: GraphBoard | undefined;
+    onUpdateFilter: (type: string, value: string) => Promise<void>;
+    onApplyFilters: (tags: string, folders: string, tagMode: 'AND' | 'OR') => Promise<void>;
+    onRequestConfirm: (msg: string, action: () => void) => void;
+    allTags: string[];
+    allFolders: string[];
+}
+
+const sharedInputStyle: React.CSSProperties = { background: 'var(--background-modifier-form-field)', border: 'none', color: 'var(--text-normal)', padding: '8px', borderRadius: '8px', width: '100%', marginBottom: '8px', fontSize: '12px' };
+
+const AutocompleteInput = ({ value, onChange, options, placeholder }: { value: string, onChange: (v:string)=>void, options: string[], placeholder: string }) => {
+    const [show, setShow] = React.useState(false);
+    const [selectedIndex, setSelectedIndex] = React.useState(-1);
+    
+    const parts = value.split(',').map(s => s.trim());
+    const currentTyping = parts.pop()?.toLowerCase() || ''; 
+    const existing = parts.filter(p => p !== ''); 
+    
+    let filtered = options.filter(o => !existing.includes(o));
+    if (currentTyping) {
+        filtered = filtered.filter(o => o.toLowerCase().includes(currentTyping));
+    }
+    filtered = filtered.slice(0, 10); 
+
+    React.useEffect(() => {
+        setSelectedIndex(-1);
+    }, [currentTyping]);
+
+    const handleSelect = (opt: string) => {
+        const newParts = [...parts]; 
+        newParts.push(opt); 
+        onChange(newParts.join(', ') + (newParts.length > 0 ? ', ' : '')); 
+        setShow(false);
+        setSelectedIndex(-1);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        e.stopPropagation(); 
+        if (!show || filtered.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault(); 
+            setSelectedIndex(prev => (prev < filtered.length - 1 ? prev + 1 : 0)); 
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSelectedIndex(prev => (prev > 0 ? prev - 1 : filtered.length - 1)); 
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (selectedIndex >= 0 && selectedIndex < filtered.length) {
+                const selectedOpt = filtered[selectedIndex];
+                if (selectedOpt !== undefined) {
+                    handleSelect(selectedOpt);
+                }
+            }
+        } else if (e.key === 'Escape') {
+            setShow(false);
+        }
+    };
+
+    return (
+        <div style={{ position: 'relative', width: '100%' }}>
+            <input 
+                style={{...sharedInputStyle, marginBottom: 0}} 
+                placeholder={placeholder} 
+                value={value} 
+                onChange={e => { onChange(e.target.value); setShow(true); }} 
+                onFocus={() => setShow(true)} 
+                onBlur={() => setTimeout(() => setShow(false), 200)} 
+                onKeyDown={handleKeyDown} 
+                onKeyUp={e => e.stopPropagation()} 
+            />
+            {show && filtered.length > 0 && (
+                <div className="suggestion-list" style={{ position: 'absolute', top: '100%', left: 0, width: '100%', zIndex: 101, maxHeight: '160px', overflowY: 'auto', marginTop: '4px' }}>
+                    {filtered.map((opt, index) => (
+                        <div 
+                            key={opt} 
+                            className={`suggestion-item ${index === selectedIndex ? 'selected' : ''}`} 
+                            onMouseDown={(e) => {
+                                e.preventDefault(); 
+                                handleSelect(opt);
+                            }}
+                        >
+                            {opt}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRenameBoard, onDeleteBoard, onAutoLayout, onResetView, currentBoard, onUpdateFilter, onApplyFilters, onRequestConfirm, allTags, allFolders }: ControlPanelProps) => {
     const [showFilters, setShowFilters] = React.useState(false);
     const [isRenaming, setIsRenaming] = React.useState(false);
     const [tempName, setTempName] = React.useState('');
-    React.useEffect(() => { setIsRenaming(false); setTempName(currentBoard?.name || ''); }, [currentBoard]);
     
-    // 修复 8
+    const [localTags, setLocalTags] = React.useState('');
+    const [localFolders, setLocalFolders] = React.useState('');
+    
+    const [tagMode, setTagMode] = React.useState<'AND' | 'OR'>('OR');
+    const [isApplying, setIsApplying] = React.useState(false);
+
+    React.useEffect(() => { 
+        setIsRenaming(false); 
+        setTempName(currentBoard?.name || ''); 
+        if (currentBoard) {
+            setLocalTags(currentBoard.filters.tags.join(', '));
+            setLocalFolders(currentBoard.filters.folders.join(', '));
+            setTagMode((currentBoard.filters as any).tagMode === 'AND' ? 'AND' : 'OR');
+        }
+    }, [currentBoard]);
+    
     const handleSaveName = () => { if (tempName.trim()) void onRenameBoard(tempName); setIsRenaming(false); };
     
     const handleDelete = () => { 
@@ -189,17 +315,55 @@ const ControlPanel = ({ boards, activeBoardId, onSwitchBoard, onAddBoard, onRena
     };
 
     const handleResetClick = () => { onResetView(); };
+    
+    const handleApplyFiltersClick = () => { 
+        setIsApplying(true);
+        void onApplyFilters(localTags, localFolders, tagMode); 
+        new Notice(`Filters applied! (Tags Logic: ${tagMode})`);
+        setTimeout(() => setIsApplying(false), 1200); 
+    };
 
     const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => { e.stopPropagation(); };
     const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
 
     const btnStyle = { background: 'var(--background-secondary)', border: '1px solid var(--background-modifier-border)', color: 'var(--text-normal)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', fontWeight: '500' };
     const activeBtnStyle = { ...btnStyle, background: 'var(--interactive-accent)', color: 'white', border: 'none', boxShadow: '0 2px 8px rgba(var(--interactive-accent-rgb), 0.3)' };
-    const inputStyle = { background: 'var(--background-modifier-form-field)', border: 'none', color: 'var(--text-normal)', padding: '8px', borderRadius: '8px', width: '100%', marginBottom: '8px', fontSize: '12px' };
     
-    return (<Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '20px', margin: 0, background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={() => void onAutoLayout()}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}><input style={inputStyle} placeholder="Filter Tags..." value={currentBoard.filters.tags.join(', ')} onChange={(e) => { void onUpdateFilter('tags', e.target.value); }} onKeyDown={stopKeys} onKeyUp={stopKeys} /><input style={inputStyle} placeholder="Filter Path..." value={currentBoard.filters.folders.join(', ')} onChange={(e) => { void onUpdateFilter('folders', e.target.value); }} onKeyDown={stopKeys} onKeyUp={stopKeys} /><div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => { void onUpdateFilter('status', status); }} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div></div>)}</Panel>);
+    return (<Panel position="top-right" style={{ position: 'absolute', top: '20px', right: '20px', background: 'var(--background-secondary)', opacity: '0.98', padding: '16px', borderRadius: '20px', border: '1px solid var(--background-modifier-border)', display: 'flex', flexDirection: 'column', gap: '12px', width: '280px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', cursor: 'default', pointerEvents: 'all', zIndex: 100 }} onMouseDown={stopPropagation} onClick={stopPropagation}><div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>{isRenaming ? (<><input value={tempName} onChange={(e) => setTempName(e.target.value)} onKeyDown={stopKeys} onKeyUp={stopKeys} style={{ ...sharedInputStyle, marginBottom: 0, flex: 1 }} autoFocus /><button style={activeBtnStyle} onClick={handleSaveName}>Save</button></>) : (<><select value={activeBoardId} onChange={(e) => onSwitchBoard(e.target.value)} style={{ ...btnStyle, flex: 1, textOverflow: 'ellipsis', background: 'transparent', border: '1px solid var(--background-modifier-border)' }}>{boards.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select><button style={btnStyle} onClick={() => setIsRenaming(true)} title="Rename">✎</button><button style={btnStyle} onClick={() => void onAddBoard()} title="New">+</button></>)}</div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}><button style={btnStyle} onClick={() => void onAutoLayout()}>⚡ Layout</button><button style={showFilters ? activeBtnStyle : btnStyle} onClick={() => setShowFilters(!showFilters)}>Filters</button></div><div style={{ display: 'flex', gap: '8px' }}><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleResetClick}>Reset</button><button style={{...btnStyle, flex:1, color: '#ff3b30'}} onClick={handleDelete}>Delete</button></div>{showFilters && currentBoard && (<div style={{ marginTop: '4px', paddingTop: '12px', borderTop: '1px solid var(--background-modifier-border)' }}>
+        
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <AutocompleteInput value={localTags} onChange={setLocalTags} options={allTags} placeholder="e.g. #urgent, #work" />
+            </div>
+            <button 
+                style={{ ...btnStyle, height: '33px', margin: 0, padding: '0 4px', width: '46px', flexShrink: 0, 
+                         background: tagMode === 'AND' ? 'var(--interactive-accent)' : 'var(--background-secondary)', 
+                         color: tagMode === 'AND' ? 'white' : 'var(--text-normal)', 
+                         border: tagMode === 'AND' ? 'none' : '1px solid var(--background-modifier-border)' }} 
+                onClick={() => setTagMode(prev => prev === 'AND' ? 'OR' : 'AND')}
+                title={`Currently matching ${tagMode === 'AND' ? 'ALL' : 'ANY'} tags. Click to toggle.`}
+            >
+                {tagMode}
+            </button>
+        </div>
+        
+        <div style={{ marginBottom: '8px' }}>
+             <AutocompleteInput value={localFolders} onChange={setLocalFolders} options={allFolders} placeholder="e.g. Projects/Work" />
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>{[' ', '/', 'x'].map(status => (<label key={status} style={{fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-normal)'}}><input type="checkbox" className="filter-checkbox" checked={currentBoard.filters.status.includes(status)} onChange={() => { void onUpdateFilter('status', status); }} /> {status === ' ' ? 'Todo' : status === '/' ? 'Doing' : 'Done'}</label>))}</div>
+        
+        <button style={{...btnStyle, width: '100%', marginTop: '14px', 
+                        background: isApplying ? 'var(--interactive-success, #28a745)' : 'var(--interactive-accent)', 
+                        color: 'white', border: 'none', transition: 'background 0.3s ease'}} 
+                onClick={handleApplyFiltersClick}>
+            {isApplying ? '✅ Applied!' : 'Apply Filters'}
+        </button>
+
+    </div>)}</Panel>);
 };
 
+// 【文案全面重构】：摒弃技术解释，采用“动作-结果”导向的用户指南
 const HelpPanel = ({ onClose }: { onClose: () => void }) => {
     const [lang, setLang] = React.useState<'en' | 'zh'>('zh');
 
@@ -207,23 +371,51 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
         en: {
             title: '📖 User Guide',
             sections: [
-                { heading: '🔗 Connect tasks', items: ['Drag from a node\'s right dot to another node\'s left dot to create a dependency', 'Drag to empty space to quickly create a sub-task', 'Right-click a connection line to remove it']},
-                { heading: '📝 Text nodes', items: ['Right-click canvas → Add Note to create a text annotation', 'Text nodes can connect to tasks as category labels']},
-                { heading: '✅ Task actions', items: ['Click the checkbox to toggle completion (auto-syncs to source file)', 'Completed tasks in branches keep their position', 'Right-click a task to change status']},
-                { heading: '🖱️  Canvas', items: ['Left-drag on empty space: box-select multiple nodes', 'Middle / right-drag: pan canvas', 'Scroll wheel: zoom', 'Hold Shift + click: multi-select']},
-                { heading: '📐 Layout', items: ['Click ⚡ Layout to auto-arrange all nodes', 'Preserves the vertical order you set manually', 'Parent nodes auto-center to their children']},
-                { heading: '📋  Sidebar', items: ['Click a task name to fly to that node', 'Drag tasks between status groups to change status']},
+                { heading: '🎯 Tasks & Connections', items: [
+                    'Link: Drag from a node\'s handle to another to create a dependency.', 
+                    'Sub-task: Drag a connection to empty space to quickly create a new linked task.', 
+                    'Status: Click the checkbox to toggle completion, or Right-click a task for more status options.',
+                    'Delete link: Right-click a connection line to remove it.'
+                ]},
+                { heading: '📝 Canvas & Notes', items: [
+                    'Add Note: Right-click empty canvas space -> "Add Note". Link notes to tasks to act as categories.', 
+                    'Navigate: Middle-click or Right-click and drag to pan. Scroll to zoom.',
+                    'Select: Left-click and drag on empty space to box-select. Hold Shift + click to multi-select.'
+                ]},
+                { heading: '🔍 Boards & Filters', items: [
+                    'Filter: Use the top-right panel to filter by Tags or Folders. Use Up/Down arrows and Enter to autocomplete.', 
+                    'Logic: Click the "AND/OR" button to toggle between matching ALL or ANY tags.',
+                    'Boards: Create multiple boards for different projects. Zoom/pan positions are independently saved per board.'
+                ]},
+                { heading: '📐 Layout & Shortcuts', items: [
+                    'Auto-Layout: Click "⚡ Layout" to automatically organize all nodes.', 
+                    'Hotkey: Assign a global shortcut for "Auto-layout Task Graph" in Obsidian\'s hotkey settings for faster arrangement.'
+                ]},
             ]
         },
         zh: {
-            title: '📖 使用说明',
+            title: '📖 操作指南',
             sections: [
-                { heading: '🔗 连接任务', items: ['从节点右侧圆点拖拽到另一节点左侧圆点，创建依赖关系', '拖拽到空白处可快速创建子任务', '右键点击连线可删除连接']},
-                { heading: '📝 文本节点', items: ['右键画布空白处 → Add Note，创建文本标注', '文本节点可连接到任务，作为分类标签']},
-                { heading: '✅ 任务操作', items: ['点击复选框切换完成状态（自动同步源文件）', '分支中的已完成任务会保留位置，不会消失', '右键任务可更改状态']},
-                { heading: '🖱️ 画布交互', items: ['左键拖拽空白：框选多个节点', '中键 / 右键拖拽：平移画布', '滚轮：缩放', '按住 Shift + 点击：多选节点']},
-                { heading: '📐 Layout', items: ['点击 ⚡ Layout 自动排列节点', '保留你手动调整的子节点纵向顺序', '父节点自动居中对齐子节点']},
-                { heading: '📋 侧边栏', items: ['点击任务名跳转至该节点', '拖拽任务到不同状态分组可快速变更状态']},
+                { heading: '🎯 任务与连线', items: [
+                    '建立依赖：拖拽节点两侧的圆点进行连线。', 
+                    '快捷新建：将连线拖拽至空白处，直接创建关联子任务。', 
+                    '状态流转：点击复选框切换完成状态；右键点击节点选择更多状态（如 Blocked 等）。',
+                    '取消连线：右键点击连线即可删除。'
+                ]},
+                { heading: '📝 画布与批注', items: [
+                    '添加批注：右键点击画布空白处选择 "Add note"。支持将其连线至任务作为分类标签。', 
+                    '视角漫游：中键或右键拖拽以平移画布；滚轮缩放。',
+                    '批量选择：左键在空白处拖拽进行框选；按住 Shift 点击进行多选。'
+                ]},
+                { heading: '🔍 画板与检索', items: [
+                    '高效检索：使用右上角面板按标签或路径过滤。支持键盘上下键与回车快速补全。', 
+                    '逻辑切换：点击标签输入框旁的 "AND / OR" 按钮，控制匹配所有标签或任意标签。',
+                    '多画板：为不同项目创建独立画板，系统将为您独立保存每个画板的缩放与坐标位置。'
+                ]},
+                { heading: '📐 排版与快捷键', items: [
+                    '一键排版：点击 "⚡ Layout" 自动梳理节点层级。', 
+                    '快捷绑定：在 Obsidian 设置 -> 快捷键中搜索 "Auto-layout Task Graph"，绑定全局快捷键以实现键盘流操作。'
+                ]},
             ]
         }
     };
@@ -231,27 +423,37 @@ const HelpPanel = ({ onClose }: { onClose: () => void }) => {
     const c = content[lang];
 
     return (
-        <div className="task-graph-help-panel">
+        <div className="task-graph-help-panel" style={{ position: 'absolute', right: 0, bottom: '44px', width: '380px', maxHeight: '60vh', overflowY: 'auto' }}>
             <button className="task-graph-help-close" onClick={onClose}>✕</button>
-            <h3>
+            <h3 style={{ marginTop: 0, marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 {c.title}
-                <span className="task-graph-help-lang-toggle">
+                {/* 【UI 修复】：为语言切换器增加 marginRight，向左避让右上角的关闭按钮 */}
+                <span className="task-graph-help-lang-toggle" style={{ marginRight: '28px' }}>
                     <button className={`task-graph-help-lang-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => setLang('en')}>EN</button>
                     <button className={`task-graph-help-lang-btn ${lang === 'zh' ? 'active' : ''}`} onClick={() => setLang('zh')}>中</button>
                 </span>
             </h3>
             {c.sections.map((sec, i) => (
-                <div key={i}>
-                    <h4>{sec.heading}</h4>
-                    <ul>{sec.items.map((item, j) => <li key={j}>{item}</li>)}</ul>
+                <div key={i} style={{ marginBottom: '12px' }}>
+                    <h4 style={{ margin: '0 0 6px 0', color: 'var(--text-normal)', fontSize: '13px' }}>{sec.heading}</h4>
+                    <ul style={{ margin: 0, paddingLeft: '20px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                        {sec.items.map((item, j) => {
+                            const splitIndex = item.indexOf('：') !== -1 ? item.indexOf('：') : item.indexOf(':');
+                            if (splitIndex !== -1) {
+                                const action = item.substring(0, splitIndex + 1);
+                                const desc = item.substring(splitIndex + 1);
+                                return <li key={j} style={{ marginBottom: '4px' }}><strong>{action}</strong>{desc}</li>;
+                            }
+                            return <li key={j} style={{ marginBottom: '4px' }}>{item}</li>;
+                        })}
+                    </ul>
                 </div>
             ))}
         </div>
     );
 };
 
-// --- 主图表组件 ---
-const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
+const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: TaskGraphView }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [activeBoardId, setActiveBoardId] = React.useState(plugin.settings.lastActiveBoardId);
@@ -260,14 +462,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const [createTarget, setCreateTarget] = React.useState<{ sourceNodeId: string, sourcePath: string } | null>(null);
   
   const [allTags, setAllTags] = React.useState<string[]>([]);
-  // 【核心补全】：就是漏了下面这一行，把它加上！
   const [allFolders, setAllFolders] = React.useState<string[]>([]);
   
   const [showHelp, setShowHelp] = React.useState(false); 
   const [confirmReq, setConfirmReq] = React.useState<{ message: string, action: () => void } | null>(null);
   
-  // 核心：新增连线追踪状态
   const [isConnecting, setIsConnecting] = React.useState(false);
+  
+  const prevBoardIdRef = React.useRef<string | null>(null);
   
   const reactFlowInstance = useReactFlow();
   const connectionStartRef = React.useRef<{ nodeId: string | null; handleType: string | null }>({ nodeId: null, handleType: null });
@@ -281,23 +483,24 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   }, []);
 
   React.useEffect(() => {
-    // 修复 5: 因为 plugin.getTasks 已经是同步函数，这里无需 async 和 await
     const loadData = () => {
       // @ts-ignore
-      const tags: Record<string, number> = plugin.app.metadataCache.getTags();
-      setAllTags(Object.keys(tags).map(t => t.replace('#', '')));
+      const rawTags: Record<string, number> = plugin.app.metadataCache.getTags();
+      setAllTags(Object.keys(rawTags).sort());
       
-      const tasks = plugin.getTasks(activeBoardId);
-      
-      // 调整3：提取含有任务的真实路径作为补全项
       const folderSet = new Set<string>();
-      tasks.forEach(t => {
-          const parts = t.path.split('/');
+      for (const path of plugin.taskCache.keys()) {
+          const parts = path.split('/');
           parts.pop(); 
-          if (parts.length > 0) folderSet.add(parts.join('/'));
-      });
-      setAllFolders(Array.from(folderSet));
+          let currentPath = '';
+          for (const part of parts) {
+              currentPath = currentPath ? `${currentPath}/${part}` : part;
+              folderSet.add(currentPath);
+          }
+      }
+      setAllFolders(Array.from(folderSet).sort());
 
+      const tasks = plugin.getTasks(activeBoardId);
       const boardConfig = plugin.settings.boards.find(b => b.id === activeBoardId);
       const savedLayout = boardConfig?.data.layout || {};
       const savedEdges = boardConfig?.data.edges || [];
@@ -328,6 +531,16 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
       setNodes([...taskNodes, ...textNodes]);
       setEdges(savedEdges);
+
+      if (prevBoardIdRef.current !== activeBoardId) {
+          const savedViewport = boardConfig?.data.viewport as Viewport | undefined;
+          if (savedViewport) {
+              setTimeout(() => reactFlowInstance.setViewport(savedViewport), 100);
+          } else {
+              setTimeout(() => reactFlowInstance.fitView({ duration: 800, padding: 0.1 }), 100);
+          }
+          prevBoardIdRef.current = activeBoardId;
+      }
     };
     loadData();
   }, [plugin, activeBoardId, refreshKey]);
@@ -335,11 +548,11 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const onConnectStart = React.useCallback((event: React.MouseEvent | React.TouchEvent, params: any) => { 
       connectionStartRef.current = params; 
       connectionMadeRef.current = false; 
-      setIsConnecting(true); // 开启：拖拽连线时激活光标变化
+      setIsConnecting(true);
   }, []);
   
   const onConnectEnd = React.useCallback((event: MouseEvent | TouchEvent) => {
-      setIsConnecting(false); // 结束：恢复正常光标
+      setIsConnecting(false);
       if (connectionMadeRef.current) return;
       const targetIsPane = (event.target as HTMLElement).classList.contains('react-flow__pane');
       if (targetIsPane && connectionStartRef.current.nodeId) {
@@ -404,7 +617,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   };
 
-  // 修复 9: 删除画蛇添足的 as any 断言
   const updateNodeStatus = async (nodeId: string, status: string) => { 
       setNodes((nds) => nds.map((n) => { if (n.id === nodeId) return { ...n, data: { ...n.data, customStatus: status } }; return n; })); 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
@@ -414,6 +626,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
           await plugin.saveBoardData(activeBoardId, { nodeStatus }); 
       } 
   };
+
+  const onMoveEnd = React.useCallback((event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
+      const board = plugin.settings.boards.find(b => b.id === activeBoardId);
+      if (board) {
+          (board.data as any).viewport = viewport;
+          void plugin.saveBoardData(activeBoardId, { viewport } as any);
+      }
+  }, [plugin, activeBoardId]);
 
   const handleCreateTask = async (text: string) => {
       if (!createTarget) return;
@@ -428,7 +648,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       }
   };
 
-  // 修复 8: ReactFlow 的 onConnect 只能传 void 签名的函数
   const onConnect = React.useCallback((params: Connection) => { 
       void (async () => {
           connectionMadeRef.current = true; 
@@ -470,7 +689,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
       if(!board) return; 
       
-      // 修复 8: 用 void 处理不处于 async/await 上下文的 Promise 行为
       if (node.type === 'task') { 
           const layout = { ...board.data.layout, [node.id]: node.position }; 
           void plugin.saveBoardData(activeBoardId, { layout }); 
@@ -531,7 +749,6 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
 
   const handleSwitchBoard = (id: string) => { setActiveBoardId(id); plugin.settings.lastActiveBoardId = id; void plugin.saveSettings(); };
   
-  // 修复 10: 剔除冗余的 async
   const handleAddBoard = () => { const newBoard: GraphBoard = { id: Date.now().toString(), name: `Board ${plugin.settings.boards.length + 1}`, filters: { tags: [], excludeTags: [], folders: [], status: [' ', '/'] }, data: { layout: {}, edges: [], nodeStatus: {}, textNodes: [] } }; plugin.settings.boards.push(newBoard); handleSwitchBoard(newBoard.id); };
   
   const handleDeleteBoard = async (id: string) => { 
@@ -548,12 +765,12 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   const handleRenameBoard = async (newName: string) => { await plugin.updateBoardConfig(activeBoardId, { name: newName }); setRefreshKey(prev => prev + 1); };
   const handleUpdateFilter = async (type: string, value: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if (!board) return; if (type === 'tags' || type === 'excludeTags' || type === 'folders') board.filters[type as 'tags' | 'excludeTags' | 'folders'] = value.split(',').map(s => s.trim()).filter(s => s); else if (type === 'status') { const statusChar = value; const index = board.filters.status.indexOf(statusChar); if (index > -1) board.filters.status.splice(index, 1); else board.filters.status.push(statusChar); } await plugin.saveSettings(); setRefreshKey(prev => prev + 1); };
   
-  // 核心补全：独立出来的 Apply 批量处理逻辑
-  const handleApplyFilters = async (tagsStr: string, foldersStr: string) => {
+  const handleApplyFilters = async (tagsStr: string, foldersStr: string, tagMode: 'AND' | 'OR') => {
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (!board) return;
       board.filters.tags = tagsStr.split(',').map(s => s.trim()).filter(s => s);
       board.filters.folders = foldersStr.split(',').map(s => s.trim()).filter(s => s);
+      (board.filters as any).tagMode = tagMode;
       await plugin.saveSettings();
       setRefreshKey(prev => prev + 1);
   };
@@ -734,7 +951,14 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
       setTimeout(() => { reactFlowInstance.fitView({ nodes: fitViewNodes, duration: 800, padding: 0.1 }); }, 50);
   };
 
-  // 修复 10: 去除异步包装，转为普通函数
+  // 【架构架桥】：将 React 内部的算法通过 ref 暴露给外部 view 类，供全局快捷键调用
+  const layoutRef = React.useRef(handleAutoLayout);
+  layoutRef.current = handleAutoLayout;
+  React.useEffect(() => {
+      view.triggerLayout = () => { void layoutRef.current(); };
+      return () => { view.triggerLayout = undefined; };
+  }, [view]);
+
   const handleResetView = () => { 
       setConfirmReq({
           message: "Clear all positions?",
@@ -747,6 +971,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
                       await plugin.saveBoardData(activeBoardId, { layout: newLayout, textNodes: newTextNodes }); 
                       setRefreshKey(prev => prev + 1); 
                       new Notice("View reset."); 
+                      setTimeout(() => reactFlowInstance.fitView({ duration: 800, padding: 0.1 }), 100);
                   }
               })();
           }
@@ -763,6 +988,7 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
         onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
         onNodeDragStop={onNodeDragStop}
+        onMoveEnd={onMoveEnd} 
         onEdgeContextMenu={onEdgeContextMenu} 
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
@@ -778,22 +1004,20 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
         connectionLineType={ConnectionLineType.Bezier}
       >
         <Background gap={24} color="rgba(150,150,150,0.1)" size={1.5} />
-        <GraphToolbar />
-        {/* 核心补全：完整注入 allTags, allFolders 和 onApplyFilters */}
-        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
         
-        <Panel position="bottom-right" style={{ margin: 0, zIndex: 99, pointerEvents: 'none' }}>
-            <div style={{ position: 'fixed', bottom: 'calc(20px + 200px)', right: '28px', pointerEvents: 'all' }}>
-                <div style={{ position: 'relative' }}>
-                    <button
-                        className="task-graph-help-btn"
-                        onClick={() => setShowHelp(prev => !prev)}
-                        title="Help / 使用说明"
-                    >
-                        ?
-                    </button>
-                    {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
-                </div>
+        <ControlPanel boards={plugin.settings.boards} activeBoardId={activeBoardId} onSwitchBoard={handleSwitchBoard} onAddBoard={handleAddBoard} onRenameBoard={handleRenameBoard} onDeleteBoard={handleDeleteBoard} onAutoLayout={handleAutoLayout} onResetView={handleResetView} currentBoard={activeBoard} onUpdateFilter={handleUpdateFilter} onApplyFilters={handleApplyFilters} onRequestConfirm={(msg: string, action: () => void) => setConfirmReq({ message: msg, action })} allTags={allTags} allFolders={allFolders} />
+        <GraphToolbar />
+        
+        <Panel position="bottom-right" style={{ position: 'absolute', bottom: '20px', right: '70px', zIndex: 99, pointerEvents: 'none' }}>
+            <div style={{ position: 'relative', pointerEvents: 'all' }}>
+                <button
+                    className="task-graph-help-btn"
+                    onClick={() => setShowHelp(prev => !prev)}
+                    title="Help / 使用说明"
+                >
+                    ?
+                </button>
+                {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
             </div>
         </Panel>
       </ReactFlow>
@@ -813,21 +1037,23 @@ const TaskGraphComponent = ({ plugin }: { plugin: TaskGraphPlugin }) => {
   );
 };
 
-const TaskGraphWithProvider = ({ plugin }: { plugin: TaskGraphPlugin }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} /></ReactFlowProvider> ); };
+const TaskGraphWithProvider = ({ plugin, view }: { plugin: TaskGraphPlugin, view: TaskGraphView }) => { return ( <ReactFlowProvider> <TaskGraphComponent plugin={plugin} view={view} /></ReactFlowProvider> ); };
 
 export class TaskGraphView extends ItemView {
   plugin: TaskGraphPlugin; root: Root | null = null;
+  // 【新增】：类级别的开放接口，允许外界注入或调用
+  triggerLayout?: () => void;
+
   constructor(leaf: WorkspaceLeaf, plugin: TaskGraphPlugin) { super(leaf); this.plugin = plugin; }
   getViewType() { return VIEW_TYPE_TASK_GRAPH; } getDisplayText() { return "Spatial Task Graph"; } getIcon() { return "network"; }
   
-  // 修复 6 & 7: 符合 Obsidian ItemView 生命周期规范，严格返回 Promise.resolve() 替代 async 空包装
   onOpen(): Promise<void> { 
       const container = this.containerEl.children[1] as HTMLElement; 
       if (container) {
           container.empty(); 
           container.setAttr('style', 'height: 100%; width: 100%; overflow: hidden;'); 
           this.root = createRoot(container); 
-          this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} /></React.StrictMode>); 
+          this.root.render(<React.StrictMode><TaskGraphWithProvider plugin={this.plugin} view={this} /></React.StrictMode>); 
       }
       return Promise.resolve();
   }
