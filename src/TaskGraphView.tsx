@@ -190,10 +190,14 @@ const ConfirmModal = ({ message, onConfirm, onClose }: { message: string, onConf
 };
 
 const TaskSidebar = ({ nodes, onNodeCenter, onStatusChange }: { nodes: AppNode[], onNodeCenter: (nodeId: string) => void, onStatusChange: (id: string, status: string) => Promise<void> }) => {
-    const tasks = nodes.filter(isTaskNode);
-    const inProgress = tasks.filter(n => n.data.customStatus === 'in_progress');
-    const pending = tasks.filter(n => n.data.customStatus === 'pending');
-    const backlog = tasks.filter(n => n.data.customStatus === 'backlog' || n.data.customStatus === 'default' || !n.data.customStatus);
+    const { inProgress, pending, backlog } = React.useMemo(() => {
+        const tasks = nodes.filter(isTaskNode);
+        return {
+            inProgress: tasks.filter(n => n.data.customStatus === 'in_progress'),
+            pending: tasks.filter(n => n.data.customStatus === 'pending'),
+            backlog: tasks.filter(n => n.data.customStatus === 'backlog' || n.data.customStatus === 'default' || !n.data.customStatus)
+        };
+    }, [nodes]);
     const stopProp = (e: React.MouseEvent | React.WheelEvent) => e.stopPropagation();
 
     const handleDragStart = (e: React.DragEvent, nodeId: string) => { e.dataTransfer.setData('nodeId', nodeId); e.dataTransfer.effectAllowed = 'move'; };
@@ -508,7 +512,14 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   const prevBoardIdRef = React.useRef<string | null>(null);
   
   const reactFlowInstance = useReactFlow();
-  
+  const debouncedSaveBoardData = React.useMemo(
+      () => import('obsidian').then(({ debounce }) => 
+          debounce((boardId: string, data: Partial<GraphBoard['data']>) => {
+              void plugin.saveBoardData(boardId, data);
+          }, 800, true)
+      ),
+      [plugin]
+  );
   const connectionStartRef = React.useRef<Partial<OnConnectStartParams>>({});
   const connectionMadeRef = React.useRef(false);
 
@@ -679,9 +690,9 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
       const board = plugin.settings.boards.find(b => b.id === activeBoardId);
       if (board) {
           board.data.viewport = viewport;
-          void plugin.saveBoardData(activeBoardId, { viewport });
+          void debouncedSaveBoardData.then(save => save(activeBoardId, { viewport }));
       }
-  }, [plugin, activeBoardId]);
+  }, [plugin, activeBoardId, debouncedSaveBoardData]);
 
   const handleCreateTask = async (text: string) => {
       if (!createTarget) return;
@@ -733,18 +744,19 @@ const TaskGraphComponent = ({ plugin, view }: { plugin: TaskGraphPlugin, view: T
   }, [plugin, activeBoardId, setEdges, setNodes]);
 
   const onNodeDragStop = React.useCallback((event: React.MouseEvent, node: Node) => { 
-      setNodes((nds) => nds.map(n => n.id === node.id ? (node as AppNode) : n)); 
       const board = plugin.settings.boards.find(b => b.id === activeBoardId); 
       if(!board) return; 
       
-      if (node.type === 'task') { 
-          const layout = { ...board.data.layout, [node.id]: node.position }; 
-          void plugin.saveBoardData(activeBoardId, { layout }); 
-      } else if (node.type === 'text') { 
-          const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); 
-          void plugin.saveBoardData(activeBoardId, { textNodes }); 
-      } 
-  }, [plugin, activeBoardId, setNodes]);
+      void debouncedSaveBoardData.then(save => {
+          if (node.type === 'task') { 
+              const layout = { ...board.data.layout, [node.id]: node.position }; 
+              save(activeBoardId, { layout }); 
+          } else if (node.type === 'text') { 
+              const textNodes = board.data.textNodes.map(tn => tn.id === node.id ? { ...tn, x: node.position.x, y: node.position.y } : tn); 
+              save(activeBoardId, { textNodes }); 
+          }
+      });
+  }, [plugin, activeBoardId, debouncedSaveBoardData]);
   
   const handleSaveTextNode = async (id: string, text: string) => { const board = plugin.settings.boards.find(b => b.id === activeBoardId); if(board) { const textNodes = board.data.textNodes.map(tn => tn.id === id ? { ...tn, text } : tn); await plugin.saveBoardData(activeBoardId, { textNodes }); } };
   
