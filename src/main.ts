@@ -222,13 +222,14 @@ export default class TaskGraphPlugin extends Plugin {
                 leaf = firstLeaf;
             }
         } else {
-            const rightLeaf = workspace.getRightLeaf(false);
-            if (rightLeaf) {
-                leaf = rightLeaf;
+            // 【修改点】：使用 getLeaf('tab') 在中间的主工作区创建一个新的标签页
+            const centerLeaf = workspace.getLeaf('tab');
+            if (centerLeaf) {
+                leaf = centerLeaf;
                 await leaf.setViewState({ type: VIEW_TYPE_TASK_GRAPH, active: true });
             }
         }
-        // 增加 await 关键字以显式处理 Promise
+        // 显式等待视图被激活和渲染
 		if (leaf) await workspace.revealLeaf(leaf);
 	}
 
